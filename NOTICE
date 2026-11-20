@@ -1,0 +1,41 @@
+PetBot
+Copyright (C) 2026 Al-Mamun  <https://github.com/999mamun999>
+
+PetBot is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License version 3 (see LICENSE), together with
+the following ADDITIONAL TERMS, added under section 7 of the GPL version 3.
+
+-------------------------------------------------------------------------------
+ADDITIONAL TERMS (GNU GPL v3, section 7)
+-------------------------------------------------------------------------------
+
+1. Author attribution must be preserved (section 7(b)).
+   Every copy and every modified version of PetBot, in source or compiled form,
+   must keep these author attributions, unchanged, in the program's displayed
+   output:
+
+     a) The start-up credit screens on the robot display, showing
+          "PetBot", "Designed & Developed by Al-Mamun",
+          "A Personal Project • 2026", and the GitHub QR code screen
+          ("GitHub @999mamun999", "Details: 7 Tap").
+     b) The About card opened with 7 taps (or the /github command), including
+          the GitHub QR code that links to https://github.com/999mamun999
+          and the line "Designed & Developed by Al-Mamun".
+     c) The credit line at the bottom of the robot's web page.
+
+   These credits are defined in PetBot/credits.h and PetBot/qr_github.h.
+   You may ADD your own credit (for example "Modified by <your name>"),
+   but you may not remove, hide or replace the credits above.
+
+2. Modified versions must be marked as modified (section 7(c)).
+   If you distribute a modified version, state clearly that it is modified
+   and do not present it as the original PetBot by Al-Mamun.
+
+3. No use of the author's name for endorsement (section 7(e)).
+   You may not use the name "Al-Mamun" to promote or endorse modified versions
+   without permission.
+
+-------------------------------------------------------------------------------
+Third-party parts keep their own licenses: Adafruit GFX fonts (BSD),
+the Bangla glyphs are rendered from the "Nirmala UI" font at build time,
+and the GoDaddy root certificates in telegram_ca.h are public certificates.
