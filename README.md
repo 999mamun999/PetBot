@@ -10,8 +10,13 @@
 
 PetBot lives on your desk: it has EMO-style eyes and moods, reacts to touch, shaking and tilting,
 waves its little arms, sings songs (with karaoke lyrics), talks in **Bangla** (or English), shows the
-Bangla calendar and prayer times, plays games, rings alarms, and you can control it from your phone
-— at home through its own web page, or **from anywhere through Telegram**.
+Bangla calendar and prayer times, plays games and little animations, needs to be fed like a real pet,
+rings alarms, and you can control it from your phone — at home through its own web page, or
+**from anywhere through Telegram**.
+
+<p>
+  <img src="docs/images/menu.png" width="256"> <img src="docs/images/scene_village.png" width="256"> <img src="docs/images/pet.png" width="256">
+</p>
 
 ---
 
@@ -25,15 +30,30 @@ Bangla calendar and prayer times, plays games, rings alarms, and you can control
 | ⏰ **Clock mode** | big clock, date, **Bangla date (বঙ্গাব্দ)**, Hijri date, **prayer times**, weather, room temperature, timer, 12/24 h |
 | 🕌 **Prayer & Ramadan** | computed on the robot (Karachi method, Hanafi Asr), prayer alerts, Sehri wake-up & Iftar alerts |
 | 🎉 **Special days** | 21 Feb (Shaheed Minar), 26 Mar & 16 Dec (flag), Pohela Boishakh, Eid, Ramadan, your birthday 🎂 |
+| 📋 **Menu (2 taps)** | everything in one place: love, songs, funny sounds, clock, games, animations, pet, About & QR, battery, language, settings (sound, night mode, 12/24 h). Tap = next, hold = open; every item comes back to the menu |
 | 🎮 **8 games** | Magic 8-Ball, Ludo dice, Rock-Paper-Scissors, Reaction test, Catch the stars (tilt), Fly the bird, Memory (tilt), Ball in hole (tilt) — records are saved |
+| 🎬 **11 animations** | fireworks over a city, sunset beach, Bangladeshi village (hut, smoke, paddy, boat), rainy night with lightning, starry sky, aquarium, steam train, space rocket, bunny pulling a carrot, a boy fishing at the pond, a bird singing on a tree |
+| 🐣 **Pet care** | hunger and happiness bars, feed it (phone, Telegram or hold on the *MY PET* screen) and it eats an apple, levels with fireworks, daily streak, "I'm hungry!" alerts |
+| ❓ **Yes / No from Telegram** | `/q Coming to eat?` — someone at home taps the robot for **YES** or holds it for **NO**, and the answer comes back to your Telegram |
+| 🌙 **Night mode** | at night (default 11 pm – 7 am): dim screen, quiet (alarms still ring), sleeps quickly, wakes up with a stretch |
+| 🙃 **Gestures** | upside down for 3 s = do-not-disturb (screen off), pick it up = "Hi!" wave, knock twice on the table = clock for 5 s |
+| 🔐 **Login page** | optional username + password for the phone page (only a salted hash is saved), remember me for 30 days |
 | ⏰ **Alarms & reminders** | 4 alarms (any time, daily or once), bedtime reminder, reminders |
 | 📱 **Phone page** | `http://petbot.local` — Normal / Game / Clock modes, messages, faces, songs, alarms, settings |
-| ✈️ **Telegram bot** | control and get alerts from anywhere (`/love`, `/song`, `/namaz`, `/alarm 7:00`, `/remind 30m Drink water` …) |
+| ✈️ **Telegram bot** | control and get alerts from anywhere (`/love`, `/song`, `/namaz`, `/alarm 7:00`, `/remind 30m Drink water`, `/q Coming?`, `/feed`, `/pet`, `/scene beach`, `/night 11pm-7am` …) |
 | 🔋 **Battery** | LiPo percentage (8 taps), low-battery warning |
 | 📡 **WiFi upload (OTA)** | update the firmware without a cable (password protected) |
 
 <p>
   <img src="docs/images/web_bn_bangla.png" width="256"> <img src="docs/images/web_en_namaz.png" width="256"> <img src="docs/images/web_rec_b.png" width="256">
+</p>
+<p>
+  <img src="docs/images/scene_beach.png" width="256"> <img src="docs/images/scene_rabbit.png" width="256"> <img src="docs/images/scene_fishing.png" width="256">
+  <img src="docs/images/scene_bird.png" width="256"> <img src="docs/images/scene_train.png" width="256"> <img src="docs/images/scene_space.png" width="256">
+</p>
+<p>
+  <img src="docs/images/pet_eat.png" width="256"> <img src="docs/images/question.png" width="256"> <img src="docs/images/question_yes.png" width="256">
+  <img src="docs/images/menu_settings.png" width="256"> <img src="docs/images/night.png" width="256">
 </p>
 
 ---
@@ -90,6 +110,12 @@ This creates your own random password (`tools/ota_password.txt`) and `PetBot/sec
 Both are in `.gitignore`. Upload once by USB; after that `tools\upload.ps1` uploads over WiFi.
 Without `secrets.h`, WiFi upload is simply off.
 
+### 🔐 Phone page login (optional)
+Phone page → **Settings → Login** → username + password → Save (or Telegram: `/webpass name password`).
+The page then shows a sign-in screen; "remember me" keeps you signed in for 30 days.
+Forgot it? Telegram `/webpass off`, or send `L` on the USB serial monitor.
+For `tools/webshot.ps1`, put `username:password` in `tools/web_login.txt` (git-ignored).
+
 ### 🔋 Battery (optional)
 Connect LiPo **B+ → 150 kΩ → A0**, then 8 taps shows the battery. Calibrate from Telegram:
 `/battery cal 3.95` (your multimeter reading) or `/battery full` when fully charged.
@@ -101,7 +127,7 @@ Connect LiPo **B+ → 150 kΩ → A0**, then 8 taps shows the battery. Calibrate
 | Taps | Action |
 |---|---|
 | 1 | happy |
-| 2 | love |
+| 2 | **menu** (tap = next, hold = open). In the clock: next screen |
 | 3 | next song |
 | 4 | funny sound |
 | 5 | clock mode on/off (tap = next screen, hold 3 s on home = 12/24 h) |
@@ -109,6 +135,9 @@ Connect LiPo **B+ → 150 kΩ → A0**, then 8 taps shows the battery. Calibrate
 | 7 | About + GitHub QR |
 | 8 | battery |
 | hold 10 s | Bangla ⇄ English |
+
+Opened something from the menu? 2 taps (or the *Back* screen at the end of the clock) bring you back to
+the menu. While a song from the menu plays: 1 tap = next song. In animations: tap = next scene, hold = back.
 
 ---
 
@@ -148,4 +177,5 @@ Made with ❤️ in Bangladesh by **[Al-Mamun](https://github.com/999mamun999)**
 ### বাংলায় সংক্ষেপে
 PetBot একটি ছোট্ট বাংলা-বলা ডেস্ক রোবট। `PetBot/config.h`-এ নিজের নাম, শহর আর সময় অঞ্চল বসিয়ে আপলোড করুন।
 ফোন থেকে `http://petbot.local`, আর যেকোনো জায়গা থেকে Telegram দিয়ে চালানো যায়।
+২ বার টাচ করলে মেনু: গান, খেলা, ১১টা অ্যানিমেশন (গ্রাম, সমুদ্র, খরগোশ, পুকুরে মাছ ধরা...), পোষা রোবটের যত্ন, রাতের মোড আর সেটিং।
 **শুরুর ক্রেডিট স্ক্রিন ও GitHub QR পরিবর্তন করা যাবে না** (লাইসেন্সের শর্ত)।

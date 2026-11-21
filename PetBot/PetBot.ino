@@ -65,6 +65,7 @@
 #include "bangla_text.h"            // Bangla lekhar chhobi (tools/make_bangla.ps1 diye banano)
 #include <Servo.h>
 #include <EEPROM.h>
+#include <MD5Builder.h>                 // 🔐 web login er hash
 
 // Gaan er lyrics er ek line (karaoke). at = kon note theke shuru (ba ms, gaan onujayi)
 struct Lyric { uint32_t at; const char* en; const BnText* bn; };
@@ -246,8 +247,8 @@ float shakeScore = 0;
 bool clockMode = false;
 
 // Clock mode er view gulo: HOME -> (tap) DATE -> BANGLA -> HIJRI -> DAY -> WEATHER -> ROOM TEMP -> TIMER -> HOME
-enum ClockView { CV_HOME, CV_DATE, CV_BANGLA, CV_HIJRI, CV_PRAYER, CV_DAY, CV_WEATHER, CV_ROOM, CV_TIMER, CV_COUNT };
-const char* const CV_TITLE[CV_COUNT] = { "", "DATE", "BANGLA", "HIJRI", "NAMAZ", "DAY", "WEATHER", "ROOM TEMP", "TIMER" };
+enum ClockView { CV_HOME, CV_DATE, CV_BANGLA, CV_HIJRI, CV_PRAYER, CV_DAY, CV_WEATHER, CV_ROOM, CV_TIMER, CV_PET, CV_COUNT };
+const char* const CV_TITLE[CV_COUNT] = { "", "DATE", "BANGLA", "HIJRI", "NAMAZ", "DAY", "WEATHER", "ROOM TEMP", "TIMER", "MY PET" };
 
 // Timer
 bool timerRunning = false, timerAlarm = false;
@@ -282,6 +283,11 @@ bool wifiWasConnected = false;
 bool touchPrev = false, longFired = false, touching = false;
 bool gameMode = false;                      // 🎮 khela cholche (6 tap)
 bool touchIgnore = false;                   // khela theke ber howar por touch chhara porjonto kichu korbe na
+bool menuMode = false;                      // 📋 2 tap er menu khola (kaj er code menuLoop() e)
+bool qActive = false;                       // 💬 Telegram er haan/na proshno screen e (kaj er code qLoop() e)
+int8_t mnBack = -1;                         // menu theke kon item khola holo (shesh hole menu te ferot), -1 = na
+unsigned long mnBackAt = 0;                 // ei shomoy menu te ferot (love / funny)
+bool clockBackScr = false;                  // clock e "↩ ফিরে যাও" screen (menu theke khola clock)
 unsigned long gameArmUntil = 0;             // khelay haat shudhu fol er shomoy ektu nore
 enum { GE_PRESS, GE_TAP, GE_HOLD, GE_LONG, GE_SHAKE };   // khelar ghotona
 volatile unsigned long touchRiseMs = 0;     // touch er thik muhurto (interrupt) - reaction game er jonno
@@ -341,6 +347,23 @@ static const Note S_WHISTLE[] PROGMEM  = {{900,25},{1100,25},{1350,25},{1650,25}
 
 bool soundOn = true;                // serial e 'm' dile mute / unmute
 bool moodSoundEnabled = true;       // nijer moto random mood e shobdo hobe na
+
+// 🌙 Night mode: rate screen er alo kom, shobdo bondho (alarm thik e baje), 30 s por ghum,
+// nijer moto mood / "keu khele na" golpo / weather mood nei. EEPROM 405-410. Kaj er code nightLoop() e.
+bool nightOn = true;
+uint8_t nightSH = 23, nightSM = 0, nightEH = 7, nightEM = 0;
+bool nightNow = false;              // ekhon rater shomoy?
+bool nightMutedByMe = false;        // night mode mute koreche (shokale abar sound chalu)
+const unsigned long NIGHT_SLEEP_AFTER = 30000UL;
+
+// 🙃 Gesture: ulta kore rakhle chup + screen bondho, tulle "Hi!", table e 2 bar tok-tok = ghori
+bool flipDnd = false;               // ulta kore rakha: screen bondho, chup
+bool flipMutedSound = false;
+unsigned long upsideSince = 0;
+unsigned long peekClockUntil = 0;   // tok-tok: 5 s ghori dekhiye abar face e
+const char* lastGesture = "";       // /api/status e dekhay (test er jonno)
+float devPeak = 0;                  // shobcheye boro dhakka (status porle 0 hoy) - tok-tok mapar jonno
+const float KNOCK_DEV = 0.10f;      // table e tok: koto g er dhakka hole "tok" dhorbo
 const Note* sndNotes = nullptr;
 uint16_t sndLen = 0, sndIdx = 0;              // 16-bit: lomba gaan (jatiyo shongeet ~450 note)
 unsigned long sndNextAt = 0;
@@ -728,6 +751,7 @@ bool anthemPlaying() { return mood == MUSIC && songIdx >= 0 && SONGS[songIdx].an
 
 // Porer gaan bajao (protibar 3 tap e)
 void playNextSong() {
+  petPlay(4);                                          // 🐣 gaan = khushi
   songIdx = (songIdx + 1) % SONG_COUNT;
   const Song& s = SONGS[songIdx];
   unsigned long dur = 0;
@@ -788,6 +812,9 @@ void loadArmCalib() {
   loadAlarms();                                        // ⏰ 4 ta alarm
   loadBat();                                           // 🔋 battery mapar shothikota
   loadRecords();                                       // 🏆 khelar record
+  webLoginLoad();                                      // 🔐 web page er login
+  loadNight();                                         // 🌙 night mode
+  petLoad();                                           // 🐣 pet er khida / level
 }
 
 // Bhasha EEPROM e (byte 9 = chinho, byte 10 = 1 hole English)
@@ -932,7 +959,7 @@ void updateArms() {
   if (gameMode) {                                      // 🎮 khelay haat chup (jhakuni dhorte shubidha), fol e ektu nache
     t[0] = t[1] = 0;
     if ((long)(now - gameArmUntil) < 0) armTargets(t[0], t[1]);
-  } else if (clockMode) {
+  } else if (clockMode || menuMode) {                 // 📋 menu khola: haat sthir
     t[0] = t[1] = 0;
     if (timerAlarm) {                                  // timer shesh: dui haat nachiye dake
       t[0] = 130 + 25 * sinf(now / 120.0f);
@@ -1108,6 +1135,7 @@ void updateMoodTimeout() {
 }
 
 void randomMood() {
+  if (nightNow) return;                            // 🌙 rate nijer moto mood nei
   if (mood != NORMAL || (long)(now - nextRandomMood) < 0) return;
   int r = random(100);
   moodSoundEnabled = false;                        // nijer moto mood e chup thake
@@ -1147,6 +1175,7 @@ Mood currentWeatherMood() {
 
 // Majhe majhe weather mood + reminder dekhay (weather bodlale shathe shathe)
 void weatherReminder() {
+  if (nightNow) return;                            // 🌙 rate weather mood nei
   Mood wm = currentWeatherMood();
   if (wm != lastWeatherMood) {
     lastWeatherMood = wm;
@@ -1162,6 +1191,7 @@ void weatherReminder() {
 
 // Kotokkhon keu chhoyni tar upor robot er mood
 Mood idleStageMood(unsigned long idle) {
+  if (nightNow) return idle >= NIGHT_SLEEP_AFTER ? SLEEP : NORMAL;   // 🌙 rate: "khelbe?" golpo nei, druto ghum
   if (idle >= SLEEP_AFTER)  return SLEEP;
   if (idle >= SLEEPY_AFTER) return SLEEPY;
   if (idle >= BORED_AFTER)  return BORED;
@@ -1236,14 +1266,70 @@ void updateBehaviour() {
   }
   if (mood == DIZZY) return;
 
+  // 2a) 🙃 Ulta kore 3 second rakhle: Do-not-disturb (screen bondho, chup). Soja korle "Hi!"
+  bool upside = imu.az * Z_DIR < -0.6f;
+  if (upside) { if (!upsideSince) upsideSince = now; }
+  else upsideSince = 0;
+  if (!flipDnd && upside && now - upsideSince > 3000) {
+    flipDnd = true;
+    flipMutedSound = soundOn;
+    if (soundOn) { soundOn = false; noTone(PIN_BUZZER); sndNotes = nullptr; }
+    setMood(SLEEP, 0);
+    display.ssd1306_command(SSD1306_DISPLAYOFF);
+    lastGesture = "flip-dnd";
+    Serial.println(F("🙃 Ulta: chup + screen bondho"));
+    return;
+  }
+  if (flipDnd) {
+    if (upside) return;                                // ulta obosthay kichu na
+    flipDnd = false;
+    display.ssd1306_command(SSD1306_DISPLAYON);
+    if (flipMutedSound) soundOn = true;
+    flipMutedSound = false;
+    lastActivity = now;
+    setMood(HAPPY, 2500);                              // 👋 "Hi!" + hat nere hello
+    bandOverride = "Hi!"; bandOverrideUntil = now + 2500;
+    surpriseCooldown = now + 3000;
+    lastGesture = "flip-back";
+    return;
+  }
+
   // 2) Ulta -> SCARED
   // Ulta korle bhoy pay - kintu ulta obosthay 5 second sthir thakle shanto hoye jay (pore ghumate pare)
-  if (imu.az * Z_DIR < -0.6f && now - lastActivity < 5000) { setMood(SCARED, 700); return; }
+  if (upside && now - lastActivity < 5000) { setMood(SCARED, 700); return; }
 
-  // 3) Ghum / bored theke utha
+  // 2b) ✊ Table e 2 bar tok-tok -> 5 second ghori. Tok = choto, chhoto dhakka, robot ghurche na
+  {
+    static unsigned long knockAt = 0, firstKnock = 0;
+    static uint8_t knocks = 0;
+    if (!selfMove && dev > devPeak) devPeak = dev;
+    bool spike = !selfMove && dev > KNOCK_DEV && gm < 40.0f;
+    if (spike && now - knockAt > 110) {
+      knocks = (knocks && now - firstKnock < 900) ? knocks + 1 : 1;
+      if (knocks == 1) firstKnock = now;
+      knockAt = now;
+      surpriseCooldown = now + 1200;                   // tok e chomke uthbe na
+    }
+    if (knocks && now - knockAt > 450) {               // tok shesh: thik 2 ta hole ghori (beshi = typing/hata)
+      if (knocks == 2) {
+        lastGesture = "knock2";
+        if (mood == SLEEP) setMood(NORMAL, 0);
+        setClockMode(true);
+        clockView = CV_HOME; viewChangedAt = now;
+        peekClockUntil = now + 5000;
+        knocks = 0;
+        return;
+      }
+      knocks = 0;
+    }
+  }
+
+  // 3) Ghum theke utha: hate tulle / narale 👋 "Hi!"
   if (mood == SLEEP && activity) {
-    setMood(SURPRISED, 1200);
-    surpriseCooldown = now + 2500;
+    setMood(HAPPY, 2500);
+    bandOverride = "Hi!"; bandOverrideUntil = now + 2500;
+    surpriseCooldown = now + 3000;
+    lastGesture = "pickup-hi";
     return;
   }
 
@@ -1263,6 +1349,7 @@ void updateBehaviour() {
   if (rockCount >= 4) {
     rockCount = 0;
     setMood(LOVE, 3500);
+    petPlay(5);                                        // 🤗 dola dile khub khushi
     return;
   }
 
@@ -1329,6 +1416,7 @@ void printHelp() {
 
 void setClockMode(bool on) {
   clockMode = on;
+  clockBackScr = false;
   demoMode = false;
   lastActivity = now;
   if (on) {
@@ -1397,6 +1485,7 @@ void handleSerial() {
     else if (c == 'U') showUpdateScreen();       // upload er age "system update" screen
     else if (c == '!') { demoMode = false; clockMode = false; toggleLanguage(); }   // bhasha bodlao
     else if (c == 'X') shotRequested = true;      // screen er chhobi PC te pathao (debug)
+    else if (c == 'L') Serial.println(webLoginOff());    // 🔐 web login bhule gele: USB theke bondho
     else if (c == 'T') tgSelfTest();              // Telegram command bujha test (internet chara)
     else if (c == 'R') startScene(8, EXCITED, BN_AL_WAKE, 8000);   // alarm er drishyo (8 = FS_SUNRISE) (test, Telegram chara)
     else if (c == 'Z') startScene(3, SLEEP, BN_AL_BED, 8000);     // ghumer drishyo (3 = FS_MOON) (test)
@@ -1497,10 +1586,12 @@ void handleTouch() {
     touchIgnore = true; touchPrev = t;
     return;
   }
+  if (qActive) { qTouch(t); touchPrev = t; return; }       // 💬 proshno: tap = haan, chepe dhoro = na
+  if (menuMode) { menuTouch(t); touchPrev = t; return; }   // 📋 menu khola: touch er kaj alada
   if (t && !touchPrev && (qrUntil || batShowUntil)) {   // 🐙 QR / 🔋 battery dekhacche: touch = bondho
     qrUntil = 0; batShowUntil = 0;
     touchIgnore = true; touchPrev = t;
-    setMood(HAPPY, 1500);
+    if (!menuBack()) setMood(HAPPY, 1500);        // 📋 menu theke khulechilo: menu te ferot
     return;
   }
 
@@ -1509,7 +1600,7 @@ void handleTouch() {
     welcomeStep = -1;                             // touch korle welcome golpo theme jay
     langToggled = false;
     if (messageActive()) msgUntil = now;          // message pora hoye gele touch e bondho
-    if (!timerAlarm) PLAY(S_CHIRP);
+    if (!timerAlarm && !(mnSongCtx() && mood == MUSIC)) PLAY(S_CHIRP);   // 🎵 gaan cholle chirp diye gaan thamabo na
     longFired = false;
     if (demoMode) { demoMode = false; Serial.println(F("Demo bondho (touch)")); }
   }
@@ -1521,7 +1612,7 @@ void handleTouch() {
       if (!langToggled) { toggleLanguage(); langToggled = true; }
       longFired = true;
     } else if (held > 3000) {
-      if (mood != LAUGH) { setMood(LAUGH, 0); Serial.println(F("Touch: kat-kutu (LAUGH)")); }
+      if (mood != LAUGH) { setMood(LAUGH, 0); petPlay(3); Serial.println(F("Touch: kat-kutu (LAUGH)")); }
       longFired = true;
     } else if (held > 800 && !longFired) {
       setMood(HAPPY, 0);
@@ -1534,6 +1625,16 @@ void handleTouch() {
   if (t && clockMode && clockView == CV_HOME && !timerAlarm && !longFired && now - touchDownAt > 3000) {
     toggleTimeFormat();
     longFired = true;
+  }
+
+  // 🐣 PET screen e chepe dhorle khawano
+  if (t && clockMode && clockBackScr && !longFired && now - touchDownAt > 800) {   // 📋 "ফিরে যাও" screen e chepe dhoro
+    longFired = true; touchIgnore = true;
+    menuBack();
+  }
+  if (t && clockMode && clockView == CV_PET && !clockBackScr && !timerAlarm && !longFired && now - touchDownAt > 800) {
+    petFeed();
+    longFired = true; touchIgnore = true;          // chhere dile onno kichu korbe na
   }
 
   // Timer screen e chepe dhorle start / pause
@@ -1553,6 +1654,13 @@ void handleTouch() {
   }
 
   if (!t && tapCount > 0 && now - lastTapAt > 500) {
+    if (mnSongCtx() && mood == MUSIC && tapCount <= 2) {   // 🎵 menu theke gaan: 1 tap = porer gaan, 2 tap = menu
+      if (tapCount == 1) playNextSong();
+      else { noTone(PIN_BUZZER); sndNotes = nullptr; setMood(NORMAL, 0); menuBack(); }
+      tapCount = 0; touchPrev = t;
+      return;
+    }
+    if (tapCount >= 5) mnBack = -1;               // shortcut: menu er kaj shesh, ar menu te ferot na
     if (tapCount >= 8) {
       timerAlarm = false;
       showBattery();                              // 🔋 8 tap = battery
@@ -1567,6 +1675,7 @@ void handleTouch() {
       setClockMode(!clockMode);
     } else if (clockMode) {
       if (timerAlarm)                                  timerAlarm = false;   // alarm bondho
+      else if (mnBack >= 0 && tapCount == 2 && clockView != CV_TIMER) menuBack();   // 📋 2 tap = menu te ferot
       else if (clockView == CV_TIMER && tapCount == 2) timerAddMinute();
       else if (clockView == CV_TIMER && tapCount >= 3) timerReset();
       else                                             nextClockView();      // porer screen
@@ -1575,8 +1684,7 @@ void handleTouch() {
     } else if (tapCount == 4) {
       playFunnySound();                           // 4 tap = random funny meme shobdo 😂
     } else if (tapCount >= 2) {
-      setMood(LOVE, 3000);
-      Serial.println(F("Touch: double tap (LOVE)"));
+      menuOpen();                                 // 📋 2 tap = menu (Love o menu te ache)
     } else if (mood == SLEEP) {
       setMood(SLEEPY, 1500);                      // aste kore ghum bhanga
       Serial.println(F("Touch: tap (ghum theke uthche)"));
@@ -1584,6 +1692,7 @@ void handleTouch() {
       // "yay!" cholche (keu khelte eseche) - oita-i thakuk
     } else {
       setMood(HAPPY, 2000);
+      petPlay(2);
       Serial.println(F("Touch: tap (HAPPY)"));
     }
     tapCount = 0;
@@ -1730,6 +1839,7 @@ void wrapMessage(const String& s) {
 }
 
 void showMessage(String t) {
+  petPlay(2);                                          // 🐣 keu kotha bollo
   String clean = "";                                   // shudhu English akkhor (Bangla font robot e nei)
   for (unsigned int i = 0; i < t.length() && clean.length() < 140; i++) {
     char c = t[i];
@@ -1777,6 +1887,100 @@ void drawMessage() {
   display.display();
 }
 
+// ---------- 💬 Telegram er haan / na proshno: tap = HAAN, chepe dhoro = NA ----------
+String qText;                                          // proshno (uttor er shathe ferot pathai)
+int64_t qChat = 0;
+int8_t qAns = -1;                                      // -1 = opekkha, 1 = haan, 0 = na
+uint8_t qChimes = 0;
+unsigned long qSince = 0, qAnsAt = 0, qNextChime = 0;
+const unsigned long Q_TIMEOUT = 10UL * 60000UL;
+
+String qStart(int64_t chat, const String& t) {
+  String clean;
+  for (unsigned int i = 0; i < t.length() && clean.length() < 120; i++) {
+    char c = t[i];
+    if (c >= 32 && c <= 126) clean += c;
+  }
+  clean.trim();
+  if (!clean.length()) return F("🤔 Proshno ta English akkhor e likho. Jemon:\n/q Khete ashbe?\n\nRobot e: tap = HAAN ✅, chepe dhoro = NA ❌");
+  if (gameMode) gameExit();
+  menuMode = false; mnBack = -1;
+  qrUntil = 0; batShowUntil = 0; screenHoldUntil = 0; clockMode = false; msgUntil = 0;
+  wrapMessage(clean);
+  qText = clean; qChat = chat; qAns = -1;
+  qActive = true; qSince = now; qChimes = 1; qNextChime = now + 180000UL;
+  welcomeStep = -1; demoMode = false; lastActivity = now;
+  moodSoundEnabled = false; setMood(CONFUSED, 0); moodSoundEnabled = true;   // 🤔 matha chulkay
+  PLAY(S_MSG);
+  return String(F("❓ Proshno ta PetBot er screen e dekhacchi:\n\"")) + clean + F("\"\n\nRobot e tap = HAAN ✅, chepe dhoro = NA ❌\nUttor ele ekhanei janabo (10 minute opekkha korbo).");
+}
+
+void qAnswer(int a) {                                  // a: 1 = haan, 0 = na, -2 = shomoy shesh
+  qAns = a; qAnsAt = now;
+  unsigned long sec = (now - qSince) / 1000;
+  String r;
+  if (a == 1)      r = F("✅ Uttor: HAAN 👍");
+  else if (a == 0) r = F("❌ Uttor: NA 👎");
+  else             r = F("⏰ 10 minute e keu uttor dey ni.");
+  r += F("\n❓ "); r += qText;
+  if (a >= 0) { r += F("\n⏱️ "); r += sec; r += F(" second e uttor dilo"); }
+  if (qChat) tgQueue(qChat, r, false);
+  moodSoundEnabled = false;
+  setMood(a == 1 ? HAPPY : (a == 0 ? SAD : NORMAL), 2600);
+  moodSoundEnabled = true;
+  if (a == 1) PLAY(S_HAPPY); else if (a == 0) PLAY(S_CLK_OFF);
+  if (a < 0) qActive = false;
+  Serial.println(r);
+}
+
+void qTouch(bool t) {
+  static unsigned long down = 0;
+  static bool fired = false;
+  if (qAns >= 0) return;                               // uttor hoye geche: fol dekhacche
+  if (t && !touchPrev) { down = now; fired = false; }
+  if (t && !fired && now - down > 900) { fired = true; qAnswer(0); }         // chepe dhoro = NA
+  if (!t && touchPrev && !fired && now - down < 900) qAnswer(1);              // tap = HAAN
+  if (t) lastActivity = now;
+}
+
+void qLoop() {
+  if (qAns >= 0) {                                     // fol: boro "হ্যাঁ!" / "না!" 2.5 s
+    if (now - qAnsAt > 2500) { qActive = false; lastActivity = now; return; }
+    display.clearDisplay();
+    drawBandBitmap(BN_Q_T);
+    const BnText& b = qAns ? BN_Q_YES : BN_Q_NO;
+    drawCenterBn(b, 28);
+    int x = 14, y = 40;
+    if (qAns) { display.drawLine(x, y, x + 5, y + 6, SSD1306_WHITE); display.drawLine(x + 5, y + 6, x + 14, y - 7, SSD1306_WHITE);
+                display.drawLine(x, y + 1, x + 5, y + 7, SSD1306_WHITE); display.drawLine(x + 5, y + 7, x + 14, y - 6, SSD1306_WHITE); }
+    else      { display.drawLine(x, y - 6, x + 12, y + 6, SSD1306_WHITE); display.drawLine(x + 12, y - 6, x, y + 6, SSD1306_WHITE);
+                display.drawLine(x + 1, y - 6, x + 13, y + 6, SSD1306_WHITE); display.drawLine(x + 13, y - 6, x + 1, y + 6, SSD1306_WHITE); }
+    display.display();
+    return;
+  }
+  if (now - qSince > Q_TIMEOUT) { qAnswer(-2); return; }
+  if (qChimes < 3 && (long)(now - qNextChime) >= 0) { PLAY(S_MSG); qChimes++; qNextChime = now + 180000UL; }   // 3 min por abar mone koray
+  display.clearDisplay();
+  drawBandBitmap(((now / 3000) % 2) ? BN_Q_HINT : BN_Q_T);
+  if ((now / 500) % 2) {                               // ❓ dui pashe
+    display.setTextColor(SSD1306_WHITE);
+    printFont(&FreeSansBold9pt7b, 1, 13, "?"); printFont(&FreeSansBold9pt7b, 119, 13, "?");
+  }
+  int first = 0;
+  if (msgLineCount > 3) {
+    first = (int)((now - qSince) / 2000) % (msgLineCount - 2);
+  }
+  display.setTextColor(SSD1306_WHITE);
+  int n = min(3, msgLineCount);
+  int y0 = 30 + (3 - n) * 7;                           // kom line hole majhe
+  for (int i = 0; i < n; i++) {
+    const char* s = msgLines[first + i].c_str();
+    int w = advanceOf(FreeSans9pt7bGlyphs, s);
+    printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2, y0 + i * 15, s);
+  }
+  display.display();
+}
+
 // ---------- Command (phone page + Telegram duijon ei use kore) ----------
 // QR / battery / test screen khola thakle bondho (phone ba Telegram theke onno kichu korle)
 #define closeOverlays() do { qrUntil = 0; batShowUntil = 0; screenHoldUntil = 0; } while (0)
@@ -1799,6 +2003,7 @@ bool cmdClock()  { closeOverlays(); msgUntil = 0; setClockMode(!clockMode); retu
 void cmdLang()   { clockMode = false; toggleLanguage(); }
 bool cmdMute() {
   soundOn = !soundOn;
+  nightMutedByMe = false;                          // malik nije thik korlo: shokale ar bodlabo na
   if (!soundOn) { noTone(PIN_BUZZER); sndNotes = nullptr; }
   return soundOn;
 }
@@ -1841,6 +2046,17 @@ String weatherStr(const char* deg) {
 //  - Long-poll: message ashle shathe shathe pay, face animation thame na
 // ===========================================================
 #define TG_HOST      "api.telegram.org"
+// 🔐 Web page er login (EEPROM 300-340) - kaj er code webDispatch() er kache
+#define EE_WL_MAGIC 300
+#define EE_WL_USER  301
+#define EE_WL_SALT  317
+#define EE_WL_HASH  325
+char webUser[16] = "";
+uint8_t webSalt[8], webHash[16];
+bool webLoginOn = false;
+uint8_t webFails = 0;                          // poro poro bhul password
+unsigned long webLockUntil = 0;                // 5 bar bhul -> 30 second bondho
+
 #define EE_TG_MAGIC  16                // 0xC7 = Telegram config ache
 #define EE_TG_TOKEN  17                // 63 byte
 #define EE_TG_OWNER  80                // 8 byte (chat id)
@@ -1935,7 +2151,11 @@ static const char TG_CMDS[] PROGMEM = "{\"commands\":["
   "{\"command\":\"namaz\",\"description\":\"Aj er namaz er shomoy\"},"
   "{\"command\":\"sehri\",\"description\":\"Sehri o Iftar er shomoy\"},"
   "{\"command\":\"azan\",\"description\":\"Namaz alert on/off\"},"
+  "{\"command\":\"q\",\"description\":\"Haan/na proshno (/q Khete ashbe?)\"},"
+  "{\"command\":\"feed\",\"description\":\"PetBot ke khawao\"},"
+  "{\"command\":\"pet\",\"description\":\"Khida, khushi, level\"},"
   "{\"command\":\"game\",\"description\":\"Robot e khelar menu\"},"
+  "{\"command\":\"scene\",\"description\":\"Animation: beach, gram, train...\"},"
   "{\"command\":\"alarm\",\"description\":\"Alarm, je kono shomoy (/alarm 3pm)\"},"
   "{\"command\":\"format\",\"description\":\"12 / 24 ghontar shomoy\"},"
   "{\"command\":\"battery\",\"description\":\"Battery koto % ache\"},"
@@ -2115,7 +2335,7 @@ bool tgKnown(const String& c) {
                                    "date", "tarikh", "hijri", "namaz", "namaj", "prayer", "salat",
                                    "sehri", "iftar", "azan", "game", "khela", "ask", "dice", "rps",
                                    "rock", "paper", "scissors", "pathor", "kagoj", "kachi",
-                                   "alarm", "bedtime", "birthday", "jonmodin", "remind", "reminder", "list", "format", "github", "battery", "bat" };
+                                   "alarm", "bedtime", "birthday", "jonmodin", "remind", "reminder", "list", "format", "github", "battery", "bat", "webpass", "night", "feed", "khawao", "pet", "scene", "animation", "q", "yesno", "proshno" };
   for (auto k : K) if (c == k) return true;
   return false;
 }
@@ -2132,9 +2352,14 @@ String tgHelp() {
   s += F("🕌 /namaz aj er namaz er shomoy, /sehri /iftar\n");
   s += F("🔔 /azan on|off: namaz er shomoy Telegram e janabo\n");
   s += F("🎮 /game khela, /ask 🎱, /dice 🎲, /rps rock ✊\n");
+  s += F("🎬 /scene animation (auto), /scene beach | gram | train | fish | rain | stars | space | fire | khorgosh | pukur | pakhi\n");
   s += F("⏰ /alarm 7:00 ba /alarm 3:30pm ekbar (4 ta porjonto), /alarm del 1\n");
   s += F("🌙 /bedtime 11pm  🎂 /birthday 15-03  🕐 /format (12/24 ghonta)\n");
   s += F("🔋 /battery koto charge ache  🐙 /github\n");
+  s += F("❓ /q Khete ashbe?: barir keu robot e tap = HAAN, chepe dhore = NA\n");
+  s += F("🐣 /feed khawao, /pet khida-khushi-level dekho\n");
+  s += F("🌙 /night 11pm-7am: rate alo kom + chup, /night off\n");
+  s += F("🔐 /webpass naam password: phone page e login, /webpass off\n");
   s += F("📝 /remind 30m Pani khao, /remind 9:30pm Medicine, /list\n");
   s += F("🌙 /hijri 1 ba /hijri -1: Hijri tarikh 1 din shorao\n");
   s += F("🔇 /mute   🌐 /lang   📊 /status");
@@ -2215,6 +2440,32 @@ void tgCommand(int64_t chat, const String& raw) {
   } else if (cmd == "battery" || cmd == "bat") {
     r = tgBatteryText(raw);
     if (batOk) showBattery();
+  } else if (cmd == "q" || cmd == "yesno" || cmd == "proshno") {   // ❓ raw theke (boro/choto akkhor, ? thakuk)
+    int sp = raw.indexOf(' ');
+    r = qStart(chat, sp > 0 ? raw.substring(sp + 1) : String());
+  } else if (cmd == "scene" || cmd == "animation") {
+    r = sceneStart(rest);
+    r += F("\n\nRobot e: tap = porer drishyo, chepe dhoro = ber hao");
+  } else if (cmd == "feed" || cmd == "khawao") {
+    r = petFeed();
+  } else if (cmd == "pet") {
+    r = petText();
+  } else if (cmd == "night") {                         // raw theke (":" "-" thakuk: /night 23:00-06:30)
+    int sp = raw.indexOf(' ');
+    r = tgNightCommand(sp > 0 ? raw.substring(sp + 1) : String());
+  } else if (cmd == "webpass") {                       // /webpass mamun 1234 | /webpass off (password er boro/choto akkhor raw theke)
+    String a = raw; a.trim();
+    int sp = a.indexOf(' ');
+    a = sp > 0 ? a.substring(sp + 1) : String();
+    a.trim();
+    int sp2 = a.indexOf(' ');
+    if (a.equalsIgnoreCase("off")) r = webLoginOff();
+    else if (sp2 > 0) {
+      String p = a.substring(sp2 + 1); p.trim();
+      r = webLoginSet(a.substring(0, sp2), p);
+      if (webLoginOn) r += F("\n\n⚠️ Password shoho ei message ta Telegram theke delete kore dao.\nBondho korte: /webpass off");
+    } else if (webLoginOn) { r = F("🔐 Phone page e login chalu ("); r += webUser; r += F(").\nNotun: /webpass naam password\nBondho: /webpass off"); }
+    else r = F("🔓 Phone page e login nei.\nChalu: /webpass naam password (jemon /webpass mamun 1234)");
   } else if (cmd == "github") {
     showQR();
     r = F("🐙 " CREDIT_AUTHOR " er GitHub:\n" CREDIT_URL "\n\n(PetBot er screen e QR dekhacchi, 30 second)");
@@ -2420,10 +2671,200 @@ void tgLoop() {
 
 void webOk(const String& t) { web.send(200, "text/plain; charset=utf-8", t); }
 
+// ---------------- 🔐 Web page er login (username + password) ----------------
+// EEPROM 300 = 0xD7 hole login chalu, 301-316 username, 317-324 salt (random), 325-340 MD5(salt + user + ":" + pass)
+// Password robot e kothao lekha thake na, shudhu tar hash. Bhule gele: Telegram e /webpass off, ba USB serial e 'L'.
+// (EE_WL_* ar webUser/webLoginOn upore, Telegram er kache - /webpass command o use kore)
+
+void webLoginLoad() {
+  webLoginOn = EEPROM.read(EE_WL_MAGIC) == 0xD7;
+  if (!webLoginOn) return;
+  for (int i = 0; i < 15; i++) webUser[i] = EEPROM.read(EE_WL_USER + i);
+  webUser[15] = 0;
+  for (int i = 0; i < 8; i++) webSalt[i] = EEPROM.read(EE_WL_SALT + i);
+  for (int i = 0; i < 16; i++) webHash[i] = EEPROM.read(EE_WL_HASH + i);
+  webSessLoad();
+}
+
+void webLoginHash(const String& user, const String& pass, uint8_t* out) {
+  MD5Builder md;
+  md.begin();
+  md.add(webSalt, 8);
+  md.add(user); md.add(":"); md.add(pass);
+  md.calculate();
+  md.getBytes(out);
+}
+
+// Session: login er por browser ke ekta random chabi (cookie "pb=...") dei. 4 ta browser porjonto,
+// EEPROM 341-404 te thake, tai restart / WiFi update er poreo abar login lage na.
+#define EE_WL_SESS 341
+#define WL_SESS    4
+uint8_t webSess[WL_SESS][16];
+uint8_t webSessNext = 0;
+
+void webSessLoad() {
+  for (int s = 0; s < WL_SESS; s++)
+    for (int i = 0; i < 16; i++) webSess[s][i] = EEPROM.read(EE_WL_SESS + s * 16 + i);
+}
+
+void webSessSave() {
+  for (int s = 0; s < WL_SESS; s++)
+    for (int i = 0; i < 16; i++) EEPROM.write(EE_WL_SESS + s * 16 + i, webSess[s][i]);
+  EEPROM.commit();
+}
+
+void webSessClear() { memset(webSess, 0, sizeof(webSess)); webSessSave(); }
+
+bool webSessEmpty(const uint8_t* t) {               // 0 ba notun EEPROM er 0xFF = khali
+  uint8_t o = 0, a = 0xFF;
+  for (int i = 0; i < 16; i++) { o |= t[i]; a &= t[i]; }
+  return o == 0 || a == 0xFF;
+}
+
+int hexVal(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+int webCookieSess() {                               // browser er cookie kon session er (-1 = nei)
+  String c = web.header(F("Cookie"));
+  int a = c.indexOf(F("pb="));
+  while (a > 0 && c[a - 1] != ' ' && c[a - 1] != ';') a = c.indexOf(F("pb="), a + 1);
+  if (a < 0 || (int)c.length() < a + 35) return -1;
+  uint8_t t[16];
+  for (int i = 0; i < 16; i++) {
+    int h = hexVal(c[a + 3 + i * 2]), l = hexVal(c[a + 4 + i * 2]);
+    if (h < 0 || l < 0) return -1;
+    t[i] = (h << 4) | l;
+  }
+  for (int s = 0; s < WL_SESS; s++)
+    if (!webSessEmpty(webSess[s]) && memcmp(t, webSess[s], 16) == 0) return s;
+  return -1;
+}
+
+void webSessNew(bool remember) {                    // notun session + Set-Cookie header
+  int s = -1;
+  for (int i = 0; i < WL_SESS && s < 0; i++) if (webSessEmpty(webSess[i])) s = i;
+  if (s < 0) { s = webSessNext; webSessNext = (webSessNext + 1) % WL_SESS; }   // shob bhora: shobcheye purono ta bad
+  static const char HX[] = "0123456789abcdef";
+  String ck = F("pb=");
+  for (int i = 0; i < 16; i++) {
+    webSess[s][i] = (uint8_t)RANDOM_REG32;
+    ck += HX[webSess[s][i] >> 4]; ck += HX[webSess[s][i] & 15];
+  }
+  if (webSessEmpty(webSess[s])) webSess[s][0] = 1;
+  webSessSave();
+  ck += F("; Path=/; HttpOnly; SameSite=Strict");
+  if (remember) ck += F("; Max-Age=2592000");      // 30 din
+  web.sendHeader(F("Set-Cookie"), ck);
+}
+
+String webLoginSet(const String& u, const String& p) {
+  bool ok = u.length() >= 1 && u.length() <= 15 && p.length() >= 4 && p.length() <= 32;
+  for (unsigned int i = 0; ok && i < u.length(); i++) { char c = u[i]; if (!(isalnum((uint8_t)c) || c == '_' || c == '-' || c == '.')) ok = false; }
+  for (unsigned int i = 0; ok && i < p.length(); i++) { uint8_t c = p[i]; if (c < 33 || c > 126) ok = false; }
+  if (!ok) return F("✗ Username 1-15 akkhor (a-z, 0-9, _ - .), password 4-32 akkhor (space chara)");
+  for (int i = 0; i < 8; i++) webSalt[i] = (uint8_t)RANDOM_REG32;
+  webLoginHash(u, p, webHash);
+  memset(webUser, 0, sizeof(webUser));
+  strncpy(webUser, u.c_str(), 15);
+  EEPROM.write(EE_WL_MAGIC, 0xD7);
+  for (int i = 0; i < 15; i++) EEPROM.write(EE_WL_USER + i, webUser[i]);
+  for (int i = 0; i < 8; i++) EEPROM.write(EE_WL_SALT + i, webSalt[i]);
+  for (int i = 0; i < 16; i++) EEPROM.write(EE_WL_HASH + i, webHash[i]);
+  webLoginOn = true; webFails = 0; webLockUntil = 0;
+  webSessClear();                                  // purono shob login batil (commit o eikhane)
+  return String(F("🔐 Login chalu! Username: ")) + webUser;
+}
+
+String webLoginOff() {
+  webLoginOn = false; webFails = 0; webLockUntil = 0;
+  EEPROM.write(EE_WL_MAGIC, 0);
+  webSessClear();
+  return F("🔓 Login bondho: page ekhon password chara khole");
+}
+
+bool webLoginCheck(const String& u, const String& p) {
+  if (!webLoginOn || u != webUser || p.length() > 32) return false;
+  uint8_t h[16];
+  webLoginHash(u, p, h);
+  uint8_t diff = 0;
+  for (int i = 0; i < 16; i++) diff |= h[i] ^ webHash[i];
+  return diff == 0;
+}
+
+bool webLocked() { return webLockUntil && (long)(millis() - webLockUntil) < 0; }
+int webLockSecs() { return webLocked() ? (int)((webLockUntil - millis()) / 1000) + 1 : 0; }
+void webFail() { if (++webFails >= 5) { webFails = 0; webLockUntil = millis() + 30000UL; } }   // 5 bar bhul -> 30 s
+
+int b64Val(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+bool webAuthOk() {                                 // script er jonno: "Authorization: Basic ..." (tools/webshot.ps1)
+  String a = web.header(F("Authorization"));
+  if (!a.startsWith(F("Basic ")) || a.length() > 80) return false;
+  String d; uint32_t buf = 0; int bits = 0;
+  for (unsigned int i = 6; i < a.length(); i++) {
+    int v = b64Val(a[i]);
+    if (v < 0) continue;
+    buf = (buf << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; d += (char)((buf >> bits) & 0xFF); }
+  }
+  int c = d.indexOf(':');
+  return c > 0 && webLoginCheck(d.substring(0, c), d.substring(c + 1));
+}
+
+String webLockJson() { return String(F("{\"ok\":0,\"lock\":")) + webLockSecs() + '}'; }
+
+void webAuthApi() {                                // POST /api/auth (login page theke)
+  String j;
+  if (!webLoginOn) j = F("{\"ok\":1}");
+  else if (webLocked()) j = webLockJson();
+  else if (web.method() == HTTP_POST && webLoginCheck(web.arg("user"), web.arg("pass"))) {
+    webFails = 0;
+    webSessNew(web.arg("rem") == "1");
+    j = F("{\"ok\":1}");
+  } else {
+    webFail();
+    j = webLocked() ? webLockJson() : String(F("{\"ok\":0}"));
+  }
+  web.send(200, "application/json", j);
+}
+
+bool webGate() {                                   // true = dhukte dao
+  if (!webLoginOn) return true;
+  const String& u = web.uri();
+  // favicon, login nijei, upload er age RAM khali kora (otaprep: kono tottho nei, WiFi upload nijei password diye bondho)
+  if (u == F("/favicon.svg") || u == F("/favicon.ico") || u == F("/api/otaprep") || u == F("/api/auth")) return true;
+  if (webCookieSess() >= 0) return true;
+  if (web.hasHeader(F("Authorization"))) {
+    if (webLocked()) { web.send(429, "text/plain; charset=utf-8", F("⏳ Onek bar bhul password. 30 second por abar chesta koro.")); return false; }
+    if (webAuthOk()) { webFails = 0; return true; }
+    webFail();
+  }
+  if (u == F("/")) {                               // sundor login page
+    web.sendHeader(F("Cache-Control"), F("no-store"));
+    web.send_P(200, "text/html; charset=utf-8", LOGIN_PAGE);
+    return false;
+  }
+  web.send(401, "application/json", F("{\"login\":1}"));
+  return false;
+}
+
 // Shob web route ekta function e (protita web.on() er alada memory lage - ekhane ~3KB RAM bache)
 void webDispatch() {
+  if (!webGate()) return;                            // 🔐 login chalu thakle age password
   const String& u = web.uri();
   if (u == F("/")) { // gzip kora page (chhoto, druto, kete jay na)
+    web.sendHeader("Cache-Control", "no-store");
     web.sendHeader("Content-Encoding", "gzip");
     web.send_P(200, "text/html; charset=utf-8", (const char*)WEB_PAGE_GZ, WEB_PAGE_GZ_LEN);
   } else if (u == F("/favicon.svg")) {
@@ -2517,6 +2958,40 @@ void webDispatch() {
     tgRestart();
     if (!tgOwner) tgStartPair();
     webOk(tgOwner ? "✓ token save holo" : "✓ save! ekhon Telegram e bot ke /start pathao");
+  } else if (u == F("/api/q")) {                   // 💬 ?t=proshno (Telegram chara), ?a=1/0 uttor (test)
+    if (web.hasArg("a")) { if (qActive && qAns < 0) qAnswer(web.arg("a").toInt() ? 1 : 0); webOk(qActive ? "uttor holo" : "proshno nei"); }
+    else webOk(qStart(0, web.arg("t")));
+  } else if (u == F("/api/menu")) {                // 📋 test: menu kholo (?i=item, &s=1 setting)
+    String r = menuOpenAt(web.arg("i").toInt(), web.arg("s") == "1");
+    if (web.arg("do") == "1") menuDo();            // test: oi item chepe dhora
+    webOk(r);
+  } else if (u == F("/api/pet")) {                 // 🐣 ?a=feed | play
+    String a = web.arg("a");
+    if (a == "feed") petFeed();
+    else if (a == "play" && !gameMode && !messageActive()) {
+      if (clockMode) setClockMode(false);
+      setMood(LAUGH, 2500); petPlay(5);
+    }
+    web.send(200, "application/json", petJson());
+  } else if (u == F("/api/night")) {               // 🌙 ?on=1&s=23:00&e=07:00
+    if (web.hasArg("s") && web.hasArg("e")) {
+      uint8_t osh = nightSH, osm = nightSM, oeh = nightEH, oem = nightEM;
+      if (!nightSetRange(web.arg("s") + " " + web.arg("e"), false)) { nightSH = osh; nightSM = osm; nightEH = oeh; nightEM = oem; }
+    }
+    if (web.hasArg("on")) nightOn = web.arg("on") == "1";
+    if (web.args()) { saveNight(); nightCheck(); }
+    web.send(200, "application/json", nightJson());
+  } else if (u == F("/api/auth")) {                // login page er form
+    webAuthApi();
+  } else if (u == F("/api/logout")) {
+    int sn = webCookieSess();
+    if (sn >= 0) { memset(webSess[sn], 0, 16); webSessSave(); }
+    web.sendHeader(F("Set-Cookie"), F("pb=; Path=/; Max-Age=0"));
+    webOk("bye");
+  } else if (u == F("/api/login")) {               // 🔐 login chalu / bondho (POST user + pass, ba ?off=1)
+    if (web.hasArg("off")) webOk(webLoginOff());
+    else if (web.method() == HTTP_POST) webOk(webLoginSet(web.arg("user"), web.arg("pass")));
+    else webOk(webLoginOn ? String(F("🔐 chalu: ")) + webUser : String(F("🔓 bondho")));
   } else if (u == F("/api/tg/pair")) {
     if (!tgToken[0]) { webOk("age token dao"); return; }
     tgStartPair();
@@ -2535,6 +3010,7 @@ void webDispatch() {
     else if (g == "off")   { if (gameMode) gameExit(); webOk("khela bondho"); }
     else if (g == "testrec" || g == "testcatch") webOk(gameTestRecord(g == "testrec"));   // test: notun record er screen
     else if (web.hasArg("start")) webOk(webGameStart(web.arg("start").toInt()));
+    else if (web.hasArg("scene")) webOk(sceneStart(web.arg("scene")));   // 🎬 0-7 ba "auto"
     else                   { gameEnter(); webOk("khelar menu"); }
   } else if (u == F("/api/status")) {
     String j = "{\"mood\":\"";
@@ -2542,7 +3018,9 @@ void webDispatch() {
     j += "\",\"time\":\""; j += timeStr();
     j += "\",\"weather\":\""; j += weatherStr("C");
     j += "\",\"lang\":\""; j += langEn ? "EN" : "BN";
-    j += "\",\"sound\":\""; j += soundOn ? "sound on" : "mute";
+    j += "\",\"sound\":\""; j += soundOn ? "sound on" : (nightNow && nightMutedByMe ? "night" : "mute");
+    j += "\",\"gest\":\""; j += lastGesture; j += "\",\"dv\":"; j += String(devPeak, 2); devPeak = 0;
+    j += ",\"menu\":"; j += menuMode ? 1 : 0; j += ",\"mback\":"; j += mnBack; j += ",\"x\":\"";
     j += "\",\"tg\":\""; j += jsonEsc(tgState);
     j += "\",\"tgBot\":\""; j += jsonEsc(tgBot);
     j += "\",\"tgOwner\":\""; j += tgOwner ? jsonEsc(tgOwnerName[0] ? String(tgOwnerName) : String("ache")) : String("");
@@ -2558,6 +3036,7 @@ void webDispatch() {
 
 
 void startWeb() {
+  web.collectHeaders("Cookie");                   // 🔐 login session er cookie porte
   web.onNotFound(webDispatch);                   // shob API webDispatch() e
   web.begin();
   MDNS.begin(MDNS_NAME);
@@ -3280,7 +3759,9 @@ void printFont(const GFXfont* f, int x, int baseY, const char* s) {
 }
 
 void nextClockView() {
-  clockView = (clockView + 1) % CV_COUNT;
+  if (clockBackScr) { clockBackScr = false; clockView = CV_HOME; }                    // ferot screen er por abar shuru
+  else if (mnBack >= 0 && clockView == CV_COUNT - 1) clockBackScr = true;              // 📋 menu theke: shesh e "ফিরে যাও"
+  else clockView = (clockView + 1) % CV_COUNT;
   viewChangedAt = now;
   PLAY(S_TICK);
   Serial.print(F("Clock view: "));
@@ -3585,6 +4066,7 @@ void hijriDate(const struct tm* tm, int& d, int& m, int& y) {   // m: 1..12
 #define FS_SUNRISE  8                   // 🌅 alarm: shurjo uthche
 #define FS_BELL     9                   // 🔔 alarm: ghonta dulche
 #define FS_BATTERY 10                   // 🪫 charge kom
+#define FS_FOOD    11                   // 🍎 pet ke khawano
 
 static const char TGS_NY[]   PROGMEM = "🎆 Happy New Year! Notun bochor onek bhalo katuk 🎉";
 static const char TGS_FAL[]  PROGMEM = "🌼 Pohela Falgun! Boshonto eshe geche 🌸";
@@ -3691,7 +4173,7 @@ void startFest(int i, unsigned long ms) {
 // Bishesh dine majhe majhe (45 min por por) utsob er drishyo
 void festReminder() {
   int sp = todaySpecial();
-  if (sp < 0 || mood != NORMAL || welcomeStep >= 0) return;
+  if (sp < 0 || mood != NORMAL || welcomeStep >= 0 || nightNow) return;   // 🌙 rate utsob er drishyo nei
   if (!nextFestAt) nextFestAt = now + 45UL * 60000UL;
   if ((long)(now - nextFestAt) < 0) return;
   startFest(sp, 7000);
@@ -3823,6 +4305,7 @@ void drawFestScene() {
     case FS_SUNRISE:  drawSunrise();      break;
     case FS_BELL:     drawBell();         break;
     case FS_BATTERY:  drawBatteryScene(); break;
+    case FS_FOOD:     drawFoodScene();    break;
   }
 }
 
@@ -4327,7 +4810,7 @@ String tgRozaText() {
 //    Menu: tap = porer khela, chepe dhora = shuru
 //    Khelay: 2.5 s chepe dhorle menu te fire; menu te 2.5 s = khela bondho. 90 s kichu na korle nijei bondho.
 // ===========================================================
-enum { G_MENU, G_8BALL, G_DICE, G_RPS, G_REACT, G_CATCH, G_FLAP, G_SIMON, G_HOLE, G_EXIT, G_N };
+enum { G_MENU, G_8BALL, G_DICE, G_RPS, G_REACT, G_CATCH, G_FLAP, G_SIMON, G_HOLE, G_SCENE, G_EXIT, G_N };
 uint8_t gameId = G_MENU, menuSel = G_8BALL;
 uint8_t gState = 0;
 unsigned long gT = 0, gLastInput = 0, gShakeAt = 0;
@@ -4353,7 +4836,875 @@ void recordFx(int x, int y, int w, int h) {
 }
 
 static const BnText* const G_NAME[G_N] PROGMEM = { &BN_GM_T, &BN_GM_8BALL, &BN_GM_DICE, &BN_GM_RPS, &BN_GM_REACT, &BN_GM_CATCH,
-                                                    &BN_GM_FLAP, &BN_GM_SIMON, &BN_GM_HOLE, &BN_GM_EXIT };
+                                                    &BN_GM_FLAP, &BN_GM_SIMON, &BN_GM_HOLE, &BN_GM_SCENE, &BN_GM_EXIT };
+
+// ===========================================================
+//  🎬 Animation: choto choto drishyo (game menu theke, phone / Telegram theke)
+//  Upore 16 pixel holud (akash), niche neel (shagor / mati) - OLED er dui rong kaje lagai.
+// ===========================================================
+enum { SC_FIRE, SC_BEACH, SC_VILLAGE, SC_RAIN, SC_STARS, SC_FISH, SC_TRAIN, SC_SPACE, SC_RABBIT, SC_FISHING, SC_BIRD, SC_N };
+static const BnText* const SC_NAME[SC_N] PROGMEM = { &BN_SC_FIRE, &BN_SC_BEACH, &BN_SC_VILL, &BN_SC_RAIN,
+                                                     &BN_SC_STARS, &BN_SC_FISH, &BN_SC_TRAIN, &BN_SC_SPACE,
+                                                     &BN_SC_RABBIT, &BN_SC_FISHNG, &BN_SC_BIRD };
+static const char* const SC_EN[SC_N] = { "Fireworks", "Sunset Beach", "My Village", "Rainy Night",
+                                         "Starry Night", "Aquarium", "Train", "Space Rocket",
+                                         "Bunny & Carrot", "Fishing Time", "Singing Bird" };
+uint8_t scIdx = 0;
+bool scAuto = true;                                    // auto: proti 25 s e porer drishyo
+bool scFromGameMenu = false;                           // khelar menu theke khola (dhorle oikhane ferot)
+unsigned long scSince = 0;
+const unsigned long SC_AUTO_MS = 25000UL;
+#define SCW SSD1306_WHITE
+#define SCB SSD1306_BLACK
+
+uint32_t scHash(uint32_t x) {                          // eki number e protibar eki "random" (animation sthir thake)
+  x ^= x >> 16; x *= 0x7feb352dUL; x ^= x >> 15; x *= 0x846ca68bUL; x ^= x >> 16;
+  return x;
+}
+
+// 🌴 narikel gach: gori (bx, 63) theke matha (tx, ty), pata hawai dole
+void scPalm(int bx, int tx, int ty, unsigned long t) {
+  for (int i = 0; i <= 14; i++) {
+    float k = i / 14.0f;
+    int x = bx + (int)((tx - bx) * k + sinf(k * 3.1f) * 3);
+    int y = 63 - (int)((63 - ty) * k);
+    display.fillRect(x - 1, y, 3, 2, SCW);
+  }
+  float sway = sinf(t / 700.0f) * 1.5f;
+  static const int8_t DX[6] = { -14, -9, -3, 4, 10, 14 };
+  for (int f = 0; f < 6; f++) {
+    for (int s = 1; s <= 6; s++) {
+      float k = s / 6.0f;
+      int x = tx + (int)(DX[f] * k + sway * k);
+      int y = ty - 3 + (int)(-4 * k + 10 * k * k * (abs(DX[f]) > 8 ? 1.0f : 0.6f));
+      display.fillRect(x, y, 2, 1, SCW);
+    }
+  }
+  display.fillCircle(tx - 1, ty + 1, 1, SCW); display.fillCircle(tx + 2, ty + 1, 1, SCW);   // narikel
+}
+
+void scCloud(int x, int y, uint16_t c) {
+  display.fillCircle(x, y + 2, 3, c); display.fillCircle(x + 5, y, 4, c);
+  display.fillCircle(x + 10, y + 2, 3, c); display.fillRect(x, y + 2, 11, 4, c);
+}
+
+// 1) 🎆 Atoshbaji: shohorer upor rocket uthe phote (upore holud, niche neel phul)
+void scFireworks(unsigned long t) {
+  static const uint8_t BX[10] = { 0, 13, 23, 37, 50, 63, 76, 90, 102, 115 };
+  static const uint8_t BH[10] = { 14, 22, 10, 26, 16, 20, 12, 24, 15, 18 };
+  static const uint8_t BW[10] = { 12, 9, 13, 12, 12, 12, 13, 11, 12, 13 };
+  for (int i = 0; i < 10; i++) {                       // bhobon + jolonto janala
+    int x = BX[i], h = BH[i], w = BW[i];
+    display.drawRect(x, 64 - h, w, h, SCW);
+    for (int wy = 66 - h; wy < 62; wy += 4)
+      for (int wx = x + 2; wx < x + w - 2; wx += 3)
+        if (scHash(i * 977 + wy * 31 + wx * 7 + (t / 4000)) % 3 == 0) display.drawPixel(wx, wy, SCW);
+  }
+  for (int s = 0; s < 4; s++) {
+    const uint32_t P = 2600;
+    unsigned long tt = t + s * 650;
+    uint32_t cyc = tt / P, h = scHash(cyc * 7 + s * 131);
+    int ph = tt % P;
+    int x = 14 + h % 100, by = 5 + (h >> 8) % 24;
+    if (ph < 700) {                                    // rocket uthche
+      int y = 60 - (60 - by) * ph / 700;
+      display.drawPixel(x, y, SCW); display.drawPixel(x, y + 2, SCW);
+      if (ph % 120 < 60) display.drawPixel(x, y + 4, SCW);
+    } else {
+      int a = ph - 700;
+      if (a > 1500 && (a / 70) % 2) continue;          // shesh e jhikimiki kore nibhe
+      float r = a < 500 ? a / 500.0f * 13 : 13 + (a - 500) / 250.0f;
+      int fall = a * a / 110000;
+      int n = 10 + (h >> 16) % 5;
+      float off = ((h >> 4) & 7) * 0.2f;
+      for (int k = 0; k < n; k++) {
+        float an = k * 6.2832f / n + off;
+        display.drawPixel(x + (int)(cosf(an) * r), by + (int)(sinf(an) * r) + fall, SCW);
+        if ((h >> 20) & 1) display.drawPixel(x + (int)(cosf(an) * r * 0.55f), by + (int)(sinf(an) * r * 0.55f) + fall, SCW);
+      }
+      if (a < 150) display.fillCircle(x, by, 2, SCW);
+    }
+  }
+}
+
+// 2) 🌅 Shagore shurjasto: holud akash e shurjo neel shagore dube, narikel gach, kakra
+void scBeach(unsigned long t) {
+  unsigned long c = t % 26000;
+  float k = min(1.0f, c / 19000.0f);
+  int sy = 3 + (int)(k * 22), sx = 64;
+  for (int y = sy - 9; y <= sy + 9; y++) {             // shurjo (shudhu digonto, y<16 porjonto)
+    if (y < 0 || y >= 16) continue;
+    int dx = (int)sqrtf(81 - (y - sy) * (y - sy));
+    display.drawFastHLine(sx - dx, y, dx * 2 + 1, SCW);
+  }
+  if (c > 19500)                                       // shurjo dublo: tara
+    for (int i = 0; i < 9; i++) { uint32_t h = scHash(i + 50); if ((t / 400 + h) % 5) display.drawPixel(h % 128, (h >> 8) % 14, SCW); }
+  for (int b = 0; b < 2; b++) {                        // pakhi
+    int bx = (int)((t / 45 + b * 75) % 170) - 20, by = 5 + b * 5 + (int)(sinf(t / 900.0f + b) * 2);
+    int wing = (t / 180 + b) % 2 ? 2 : 0;
+    display.drawLine(bx - 3, by - wing, bx, by, SCW); display.drawLine(bx, by, bx + 3, by - wing, SCW);
+  }
+  for (int r = 0; r < 5; r++) {                        // dheu
+    int y = 19 + r * 5, sp = 50 + r * 25;
+    for (int x0 = 0; x0 < 160; x0 += 18) {
+      int x = (int)((x0 + r * 7 + t / sp) % 160) - 16;
+      display.drawFastHLine(x, y + (int)(sinf((x + t / 8.0f) / 10.0f) * 1.2f), 5 + (r % 2) * 2, SCW);
+    }
+  }
+  if (sy < 26) {                                       // shurjer chhaya pani te
+    for (int r = 0; r < 5; r++) {
+      int w = (11 - r * 2) * (26 - sy) / 23 + 1;
+      int jx = (int)(sinf(t / 200.0f + r) * 2);
+      display.drawFastHLine(sx - w + jx, 18 + r * 4, w * 2, SCW);
+    }
+  }
+  for (int x = 0; x < 128; x++)                        // shoreline
+    display.drawPixel(x, 46 + (int)(sinf(x / 9.0f + t / 500.0f) * 1.5f), SCW);
+  for (int i = 0; i < 26; i++) { uint32_t h = scHash(i + 900); display.drawPixel(h % 128, 50 + (h >> 8) % 14, SCW); }   // bali
+  scPalm(12, 22, 30, t);
+  int cx = 76 + (int)(sinf(t / 2200.0f) * 26), cy = 57;                // 🦀 kakra pashe hate
+  display.fillRoundRect(cx - 5, cy - 2, 11, 5, 2, SCW);
+  display.drawPixel(cx - 2, cy - 4, SCW); display.drawPixel(cx + 2, cy - 4, SCW);
+  int lg = (t / 150) % 2;
+  for (int s = -1; s <= 1; s += 2) {
+    display.drawLine(cx + s * 5, cy, cx + s * 8, cy + 2 + lg, SCW);
+    display.drawLine(cx + s * 4, cy + 2, cx + s * 7, cy + 4 - lg, SCW);
+    display.drawCircle(cx + s * 8, cy - 3, 1, SCW);
+  }
+  display.drawLine(110, 47, 110, 62, SCW);                             // ⛱️ chhata
+  display.fillCircle(110, 47, 11, SCW);
+  display.fillRect(98, 47, 25, 12, SCB);
+  display.drawLine(110, 47, 110, 62, SCW);
+  for (int s = -6; s <= 6; s += 6) display.drawLine(110, 37, 110 + s, 46, SCB);
+}
+
+// 3) 🏡 Amar gram: kuṛeghor, rannar dhoa, narikel gach, dhan khet, nodi te nouka
+void scVillage(unsigned long t) {
+  display.fillCircle(112, 7, 4, SCW);                  // ☀️ shurjo + ghurche alo
+  for (int k = 0; k < 8; k++) {
+    float a = k * 0.785f + t / 1500.0f;
+    display.drawLine(112 + (int)(cosf(a) * 6), 7 + (int)(sinf(a) * 6), 112 + (int)(cosf(a) * 8), 7 + (int)(sinf(a) * 8), SCW);
+  }
+  scCloud((int)((t / 110) % 170) - 25, 3, SCW);
+  for (int b = 0; b < 3; b++) {                        // pakhir jhak
+    int bx = (int)((t / 60 + b * 9) % 160) - 16, by = 6 + (b % 2) * 3;
+    int wing = (t / 200 + b) % 2 ? 2 : 0;
+    display.drawLine(bx - 2, by - wing, bx, by, SCW); display.drawLine(bx, by, bx + 2, by - wing, SCW);
+  }
+  for (int x = 0; x < 128; x += 7) {                   // dure gacher shari
+    uint32_t h = scHash(x + 300);
+    display.fillCircle(x + 3, 26 + h % 3, 3 + (h >> 4) % 2, SCW);
+  }
+  display.fillRect(0, 28, 128, 2, SCW);
+  display.fillRect(8, 30, 44, 24, SCB);                // ghor er jayga khali
+  display.fillTriangle(8, 39, 30, 27, 52, 39, SCW);    // chhon er chal
+  for (int x = 14; x < 48; x += 4) display.drawLine(30, 29, x, 38, SCB);
+  display.drawRect(13, 39, 34, 14, SCW);               // deyal
+  display.fillRect(26, 43, 8, 10, SCW);                // dorja
+  display.drawRect(16, 42, 6, 5, SCW); display.drawRect(38, 42, 6, 5, SCW);   // janala
+  for (int p = 0; p < 4; p++) {                        // 💨 rannar dhoa
+    int age = (t + p * 700) % 2800;
+    int x = 44 + age / 220 + (int)(sinf(age / 300.0f) * 2), y = 30 - age / 160;
+    if (y > 15) display.drawCircle(x, y, 1 + age / 1000, SCW);
+  }
+  scPalm(64, 60, 30, t + 900);
+  for (int row = 0; row < 2; row++)                    // 🌾 dhan khet
+    for (int x = 72 + row * 2; x < 128; x += 5) {
+      int y = 44 + row * 5;
+      int sw = (int)(sinf(t / 500.0f + x / 9.0f) * 1.5f);
+      display.drawLine(x, y, x - 2 + sw, y - 4, SCW); display.drawLine(x, y, x + 2 + sw, y - 4, SCW);
+    }
+  display.drawFastHLine(0, 54, 128, SCW);              // nodir par
+  for (int r = 0; r < 2; r++)                          // nodir dheu
+    for (int x0 = 0; x0 < 150; x0 += 14) {
+      int x = (int)((x0 + r * 7 + t / (70 + r * 30)) % 150) - 10;
+      display.drawFastHLine(x, 58 + r * 4, 4, SCW);
+    }
+  int bx = (int)((t / 70) % 190) - 35, bob = (int)(sinf(t / 350.0f) * 1.2f);   // ⛵ nouka
+  int hy = 57 + bob;
+  display.fillRect(bx, hy, 22, 3, SCW);
+  display.fillTriangle(bx - 5, hy, bx, hy, bx, hy + 3, SCW);
+  display.fillTriangle(bx + 22, hy, bx + 27, hy, bx + 22, hy + 3, SCW);
+  display.drawLine(bx + 11, hy - 1, bx + 11, hy - 13, SCW);
+  display.fillTriangle(bx + 12, hy - 12, bx + 12, hy - 2, bx + 20, hy - 3, SCW);
+  display.fillCircle(bx + 4, hy - 3, 1, SCW); display.drawLine(bx + 4, hy - 2, bx + 4, hy, SCW);   // majhi
+  display.drawLine(bx + 5, hy - 2, bx - 3, hy + 4, SCW);                                      // boitha
+}
+
+// 4) 🌧️ Brishtir rat: megh, brishti, bijli chomka, janalay alo
+void scRain(unsigned long t) {
+  unsigned long c = t % 7000;
+  bool flash = c < 90 || (c > 170 && c < 240);
+  if (flash) display.fillRect(0, 0, 128, 64, SCW);
+  uint16_t fg = flash ? SCB : SCW;
+  for (int i = 0; i < 4; i++) scCloud((int)((i * 40 + t / 200) % 170) - 22, 1 + (i % 2) * 3, fg);
+  display.drawLine(84, 40, 102, 28, fg); display.drawLine(102, 28, 120, 40, fg);   // 🏠 ghor
+  display.drawRect(87, 40, 31, 20, fg);
+  display.fillRect(93, 45, 8, 7, fg);                  // jolonto janala
+  display.drawFastVLine(97, 45, 7, flash ? SCW : SCB); display.drawFastHLine(93, 48, 8, flash ? SCW : SCB);
+  display.drawFastHLine(0, 60, 128, fg);
+  for (int i = 0; i < 34; i++) {                       // brishti
+    uint32_t h = scHash(i * 13 + 7);
+    int sp = 2 + h % 2;
+    int y = (int)((t * sp / 16 + (h >> 8)) % 72) - 6;
+    int x = (int)((h % 150 + 128 - y / 3) % 150) - 10;
+    if (y < 60) display.drawLine(x, y, x - 1, y + 3, fg);
+  }
+  for (int p = 0; p < 3; p++) {                        // jol er gol dheu
+    int age = (t + p * 433) % 1300;
+    uint32_t h = scHash((t + p * 433) / 1300 * 3 + p);
+    int x = 6 + h % 70, w = 1 + age / 160;
+    display.drawFastHLine(x - w, 62, w * 2, fg);
+  }
+  if (c < 320) {                                       // ⚡ bijli
+    uint16_t bc = flash ? SCB : SCW;
+    static const int8_t ZX[6] = { 40, 46, 41, 49, 44, 52 };
+    for (int k = 0; k < 5; k++) display.drawLine(ZX[k], k * 11, ZX[k + 1], (k + 1) * 11, bc);
+  }
+}
+
+// 5) 🌌 Tara bhora akash: chand, jhikimiki tara, pahar, tara khosha
+void scStars(unsigned long t) {
+  display.fillCircle(106, 8, 6, SCW); display.fillCircle(109, 6, 6, SCB);   // 🌙
+  for (int i = 0; i < 30; i++) {
+    uint32_t h = scHash(i * 29 + 5);
+    int x = h % 128, y = (h >> 8) % 44;
+    uint32_t tw = (t / 250 + (h >> 16)) % 11;
+    if (tw == 0) continue;
+    display.drawPixel(x, y, SCW);
+    if (tw == 5 && (h & 3) == 0) { display.drawPixel(x - 1, y, SCW); display.drawPixel(x + 1, y, SCW); display.drawPixel(x, y - 1, SCW); display.drawPixel(x, y + 1, SCW); }
+  }
+  unsigned long c = t % 4600;                          // 🌠 tara khosha
+  if (c < 800) {
+    uint32_t h = scHash(t / 4600 + 77);
+    int x0 = 10 + h % 50, y0 = 1 + (h >> 8) % 8;
+    int x = x0 + c * 70 / 800, y = y0 + c * 22 / 800;
+    for (int k = 0; k < 10; k += 2) display.drawPixel(x - k, y - k * 22 / 70, SCW);
+    display.fillCircle(x, y, 1, SCW);
+  }
+  static const uint8_t PK[3][4] = { { 0, 56, 26, 34 }, { 30, 98, 64, 28 }, { 82, 128, 108, 36 } };   // bam, dan, chura x, chura y
+  for (int m = 0; m < 3; m++) {                        // ⛰️ pahar (vitore kalo, dhar shada, chuday borof)
+    int l = PK[m][0], r = PK[m][1], px = PK[m][2], py = PK[m][3];
+    display.fillTriangle(l, 64, px, py, r, 64, SCB);
+    display.drawLine(l, 64, px, py, SCW); display.drawLine(px, py, r, 64, SCW);
+    display.fillTriangle(px, py, px - 4, py + 5, px + 4, py + 5, SCW);
+  }
+  for (int x = 4; x < 128; x += 9) {                   // 🌲 pine gach
+    int h = 5 + scHash(x) % 4;
+    display.fillTriangle(x - 3, 63, x, 63 - h, x + 3, 63, SCW);
+  }
+}
+
+// 6) 🐟 Aquarium: pani-r upor dheu, mach shatar kate, budbud, shaola dole
+void scFishDraw(int x, int y, int dir, int s, unsigned long t) {
+  int wag = (t / 140) % 2;
+  display.fillRoundRect(x - s * 3 / 2, y - s, s * 3, s * 2, s, SCW);
+  int tx = x - dir * s * 3 / 2;
+  display.fillTriangle(tx + dir, y, tx - dir * s * 3 / 2, y - s - wag, tx - dir * s * 3 / 2, y + s + wag, SCW);
+  display.fillCircle(x + dir * s * 3 / 4, y - s / 3, s > 3 ? 1 : 0, SCB);
+  display.drawLine(x, y + 1, x - dir * 2, y + s - 1, SCB);
+}
+void scFish(unsigned long t) {
+  for (int x = 0; x < 128; x++) display.drawPixel(x, 12 + (int)(sinf(x / 7.0f + t / 450.0f) * 2), SCW);   // pani-r upor
+  for (int i = 0; i < 3; i++) {                        // alo-r rekha
+    int x = 20 + i * 40 + (int)(sinf(t / 1500.0f + i) * 6);
+    for (int y = 17; y < 44; y += 3) display.drawPixel(x + (y - 17) / 3, y, SCW);
+  }
+  for (int i = 0; i < 40; i++) { uint32_t h = scHash(i + 400); display.drawPixel(h % 128, 60 + (h >> 8) % 4, SCW); }   // bali
+  static const uint8_t SX[4] = { 10, 18, 104, 116 };
+  for (int p = 0; p < 4; p++)                          // 🌿 shaola
+    for (int i = 0; i < 14; i++) {
+      int y = 62 - i * 2;
+      int x = SX[p] + (int)(sinf(t / 650.0f + i / 3.0f + p) * i / 4.0f);
+      display.fillRect(x, y, 2, 2, SCW);
+    }
+  display.drawRect(56, 53, 16, 9, SCW); display.drawLine(56, 53, 64, 49, SCW); display.drawLine(64, 49, 72, 53, SCW);   // 💰 bakso
+  display.fillRect(62, 56, 4, 3, SCW);
+  static const uint8_t FY[3] = { 26, 38, 48 }, FS[3] = { 5, 3, 4 };
+  static const uint16_t FV[3] = { 38, 24, 30 };
+  for (int f = 0; f < 3; f++) {                        // 🐟 mach (dui dike shatar)
+    const int R = 160;
+    int pos = (int)((t / FV[f] + f * 70) % (2 * R));
+    int dir = pos < R ? 1 : -1;
+    int x = (dir > 0 ? pos : 2 * R - pos) - 16;
+    scFishDraw(x, FY[f] + (int)(sinf(t / 600.0f + f) * 2), dir, FS[f], t);
+  }
+  for (int b = 0; b < 7; b++) {                        // 🫧 budbud
+    uint32_t h = scHash(b * 41 + 3);
+    int y = 60 - (int)((t / (22 + h % 12) + (h >> 8)) % 46);
+    int x = (b < 3 ? 64 : (h % 120) + 4) + (int)(sinf(y / 4.0f) * 2);
+    display.drawCircle(x, y, 1 + (h >> 12) % 2, SCW);
+  }
+}
+
+// 7) 🚂 Relgari: pahar, rail line, dhoa chhere train jay
+void scTrain(unsigned long t) {
+  display.fillCircle(14, 7, 5, SCW);
+  scCloud((int)((t / 150) % 170) - 25, 2, SCW);
+  scCloud((int)((t / 150 + 85) % 170) - 25, 6, SCW);
+  for (int x = 0; x < 128; x++)                        // pahar
+    display.drawPixel(x, 32 + (int)(sinf(x / 17.0f) * 5 + sinf(x / 6.0f) * 2), SCW);
+  for (int x0 = 0; x0 < 150; x0 += 13) {               // gach
+    int x = (int)((x0 + 150 - (t / 90) % 150) % 150) - 10;
+    display.drawLine(x, 44, x, 48, SCW); display.fillCircle(x, 42, 3, SCW);
+  }
+  display.drawFastHLine(0, 57, 128, SCW);              // rail
+  for (int x = 0; x < 128; x += 6) display.fillRect(x, 58, 3, 2, SCW);
+  unsigned long c = t % 8000;
+  int tx = (int)(c * 230 / 8000) - 95;                 // train er pichhon
+  auto wheel = [&](int wx) {
+    display.fillCircle(wx, 54, 3, SCW); display.fillCircle(wx, 54, 1, SCB);
+    float a = t / 90.0f;
+    display.drawLine(wx, 54, wx + (int)(cosf(a) * 3), 54 + (int)(sinf(a) * 3), SCB);
+  };
+  for (int car = 0; car < 2; car++) {                  // 🚃 bogi
+    int x = tx + car * 28;
+    display.fillRoundRect(x, 41, 25, 11, 2, SCW);
+    for (int w = 0; w < 3; w++) display.fillRect(x + 3 + w * 7, 43, 5, 4, SCB);
+    wheel(x + 5); wheel(x + 19);
+    display.drawFastHLine(x + 25, 50, 3, SCW);
+  }
+  int e = tx + 56;                                     // 🚂 engine
+  display.fillRect(e, 37, 13, 15, SCW);                // cab
+  display.fillRect(e + 3, 39, 7, 5, SCB);
+  display.fillRect(e - 1, 35, 15, 2, SCW);
+  display.fillRoundRect(e + 12, 42, 17, 10, 3, SCW);   // boiler
+  display.fillRect(e + 22, 35, 4, 7, SCW);             // chimni
+  display.fillTriangle(e + 29, 46, e + 29, 53, e + 33, 53, SCW);
+  wheel(e + 5); wheel(e + 16); wheel(e + 25);
+  for (int k = 0; k < 7; k++) {                        // 💨 dhoa (pichhone uṛe jay)
+    int age = (int)(c % 220) + k * 220;
+    long te = (long)c - age;
+    if (te < 0) continue;
+    int chx = (int)(te * 230 / 8000) - 95 + 56 + 24;
+    int x = chx - age / 40, y = 33 - age / 55;
+    if (y > 15 && x > -4 && x < 132) display.drawCircle(x, y, 1 + age / 450, SCW);
+  }
+}
+
+// 8) 🚀 Mohakash: tara pichhone shore, shoni groho, rocket er agun
+void scSpace(unsigned long t) {
+  for (int i = 0; i < 30; i++) {                       // tara (3 dhap, alada gote)
+    uint32_t h = scHash(i * 17 + 1);
+    int layer = i % 3;
+    int x = (int)((h % 128 + 1280 - (t * (layer + 1) / 70) % 1280) % 128);
+    int y = (h >> 8) % 64;
+    display.drawPixel(x, y, SCW);
+    if (layer == 2) display.drawPixel(x + 1, y, SCW);
+  }
+  display.fillCircle(18, 7, 5, SCW); display.fillCircle(16, 6, 1, SCB); display.fillCircle(20, 9, 1, SCB);   // chand
+  int px = 150 - (int)((t / 110) % 210), py = 40;      // 🪐 shoni
+  for (int k = 0; k < 40; k++) {                       // pechoner ring
+    float a = k * 0.157f;
+    if (sinf(a) < 0) display.drawPixel(px + (int)(cosf(a) * 17), py + (int)(sinf(a) * 4), SCW);
+  }
+  display.fillCircle(px, py, 8, SCW);
+  display.drawFastHLine(px - 7, py - 3, 14, SCB); display.drawFastHLine(px - 8, py + 2, 16, SCB);
+  for (int k = 0; k < 40; k++) {                       // shamner ring
+    float a = k * 0.157f;
+    if (sinf(a) >= 0) { int x = px + (int)(cosf(a) * 17), y = py + (int)(sinf(a) * 4); display.drawPixel(x, y, SCW); display.drawPixel(x, y + 1, SCB); }
+  }
+  int x = 46 + (int)(sinf(t / 900.0f) * 8), y = 34 + (int)(sinf(t / 600.0f) * 5);   // 🚀 rocket
+  int fl = 5 + (t / 60) % 4;
+  display.fillTriangle(x - 10, y - 3, x - 10, y + 3, x - 10 - fl, y, SCW);
+  display.fillTriangle(x - 10, y - 1, x - 10, y + 1, x - 10 - fl / 2, y, SCB);
+  display.fillRoundRect(x - 10, y - 4, 20, 9, 4, SCW);
+  display.fillTriangle(x + 9, y - 4, x + 9, y + 4, x + 16, y, SCW);
+  display.fillCircle(x + 3, y, 2, SCB); display.drawPixel(x + 3, y, SCW);
+  display.fillTriangle(x - 8, y - 4, x - 13, y - 9, x - 3, y - 4, SCW);
+  display.fillTriangle(x - 8, y + 4, x - 13, y + 9, x - 3, y + 4, SCW);
+}
+
+// 🐰 khorgosh (x = shorir er majh, y = shorir er niche, dir 1 = dan dike mukh, hop = lafacche)
+void scBunny(int x, int y, int dir, bool hop, int chew, unsigned long t) {
+  display.fillRoundRect(x - 9, y - 9, 17, 9, 4, SCW);           // shorir (lomba gol)
+  display.fillCircle(x - dir * 5, y - 5, 4, SCW);              // pichhoner pa er ongsho
+  display.fillCircle(x - dir * 10, y - 7, 2, SCW);             // tula-r moto lej
+  int hx = x + dir * 8, hy = y - 11 + chew;                    // matha
+  display.fillCircle(hx, hy, 4, SCW);
+  display.fillCircle(hx + dir * 3, hy + 1, 2, SCW);            // mukh er samner ongsho
+  int tw = ((t / 90) % 23 == 0) ? 2 : 0;                       // majhe majhe kan nare
+  for (int k = 0; k < 2; k++) {                                // 2 ta lomba chikon kan (pichhone helano)
+    display.drawLine(hx - dir * k, hy - 3, hx - dir * (3 + k), hy - 13 + tw, SCW);
+    display.drawLine(hx - dir * (4 + k), hy - 3, hx - dir * (8 + k), hy - 12, SCW);
+  }
+  display.drawPixel(hx + dir * 1, hy - 1, SCB);                // chokh
+  display.drawPixel(hx + dir * 5, hy + 1, SCB);                // nak
+  if (hop) {                                                   // lafano: pa chhoṛano
+    display.drawLine(x + dir * 3, y, x + dir * 8, y + 2, SCW);
+    display.drawLine(x - dir * 7, y - 1, x - dir * 13, y + 1, SCW);
+  } else {
+    display.fillRect(dir > 0 ? x + 1 : x - 5, y, 5, 2, SCW);
+    display.fillRect(dir > 0 ? x - 10 : x + 5, y, 6, 2, SCW);
+  }
+}
+
+void scCarrotTop(int x, int y, unsigned long t, int shake) {   // gajor er shobuj pata
+  int s = (int)(sinf(t / 400.0f + x) * 1.2f) + shake;
+  display.drawLine(x, y, x - 3 + s, y - 6, SCW);
+  display.drawLine(x, y, x + s, y - 8, SCW);
+  display.drawLine(x, y, x + 3 + s, y - 6, SCW);
+}
+
+// 9) 🐰 Khorgosh khet theke gajor tule khay
+void scRabbit(unsigned long t) {
+  display.fillCircle(110, 7, 5, SCW);                          // ☀️
+  scCloud((int)((t / 140) % 170) - 25, 3, SCW);
+  display.drawFastHLine(0, 36, 128, SCW);                      // beṛa
+  for (int x = 4; x < 128; x += 16) display.drawFastVLine(x, 32, 9, SCW);
+  unsigned long c = t % 12000;
+  const int CX = 80;                                           // je gajor ta tulbe
+  for (int x = 28; x < 128; x += 17) {                         // gajor khet
+    if (x == CX - 1 && c > 3000) continue;
+    scCarrotTop(x + 1, 52, t, 0);
+  }
+  int pull = 0, shake = 0;                                     // 🥕 tola
+  if (c > 3000 && c < 5000) { pull = (int)((c - 3000) * 13 / 2000); shake = (int)((c / 60) % 3) - 1; }
+  if (c > 3000 && c < 5000) {
+    int ty = 52 - pull;
+    display.fillTriangle(CX - 3, ty, CX + 3, ty, CX, ty + 13, SCW);
+    for (int k = 3; k < 12; k += 3) display.drawFastHLine(CX - 2, ty + k, 2, SCB);
+    scCarrotTop(CX, ty, t, shake);
+  }
+  display.fillRect(0, 53, 128, 11, SCB);                       // mati (gajor er nicher ongsho dhaka)
+  display.drawFastHLine(0, 53, 128, SCW);
+  for (int i = 0; i < 30; i++) { uint32_t h = scHash(i + 1200); display.drawPixel(h % 128, 56 + (h >> 8) % 8, SCW); }
+  int bx, by = 53; bool hop = false; int chew = 0;
+  if (c < 3000) {                                              // lafiye ashe
+    bx = -14 + (int)(c * 78 / 3000);
+    float ph = (c % 600) / 600.0f;
+    by = 53 - (int)(sinf(ph * 3.1416f) * 7); hop = by < 51;
+  } else if (c < 10400) {
+    bx = 64;
+    if (c > 5000) chew = ((c / 160) % 2);
+  } else {                                                     // khushi te lafiye chole jay
+    unsigned long d = c - 10400;
+    bx = 64 + (int)(d * 80 / 1600);
+    float ph = (d % 500) / 500.0f;
+    by = 53 - (int)(sinf(ph * 3.1416f) * 7); hop = by < 51;
+  }
+  scBunny(bx, by, 1, hop, chew, t);
+  if (c >= 5000 && c < 10400) {                                // 🥕 mukhe gajor, kamore choto hoy
+    int len = 13 - (int)((c - 5000) * 11 / 5400);
+    int hx = bx + 10, hy = by - 10 + chew;
+    display.fillTriangle(hx, hy - 2, hx, hy + 2, hx + len, hy, SCW);
+    if (len > 3) { display.drawLine(hx + len, hy, hx + len + 3, hy - 3, SCW); display.drawLine(hx + len, hy, hx + len + 4, hy + 1, SCW); }
+    if ((c / 300) % 3 == 0) display.drawPixel(hx + 2, hy + 5 + (int)((c / 100) % 4), SCW);   // gura
+  }
+  if (c > 9000 && c < 10400) {                                 // ❤️
+    int hy = 30 - (int)((c - 9000) / 120);
+    display.fillCircle(bx + 1, hy, 2, SCW); display.fillCircle(bx + 5, hy, 2, SCW);
+    display.fillTriangle(bx - 1, hy + 1, bx + 7, hy + 1, bx + 3, hy + 5, SCW);
+  }
+}
+
+// 10) 🎣 Choto chhele pukure mach dhore
+void scFishing(unsigned long t) {
+  display.fillCircle(16, 7, 5, SCW);                           // ☀️
+  scCloud((int)((t / 160 + 60) % 170) - 25, 2, SCW);
+  for (int b = 0; b < 2; b++) {                                // pakhi
+    int bx = (int)((t / 55 + b * 60) % 170) - 20, by = 6 + b * 4;
+    int wing = (t / 200 + b) % 2 ? 2 : 0;
+    display.drawLine(bx - 2, by - wing, bx, by, SCW); display.drawLine(bx, by, bx + 2, by - wing, SCW);
+  }
+  display.drawLine(0, 42, 44, 42, SCW); display.drawLine(44, 42, 52, 50, SCW);   // pukur par
+  for (int x = 3; x < 42; x += 7) { display.drawLine(x, 42, x - 1, 39, SCW); display.drawLine(x, 42, x + 1, 39, SCW); }   // ghash
+  for (int x = 52; x < 128; x++) display.drawPixel(x, 50 + (int)(sinf(x / 6.0f + t / 400.0f)), SCW);   // pani
+  for (int r = 0; r < 3; r++)
+    for (int x0 = 0; x0 < 90; x0 += 15) {
+      int x = 52 + (int)((x0 + r * 6 + t / (90 + r * 30)) % 80);
+      if (x < 124) display.drawFastHLine(x, 54 + r * 3, 4, SCW);
+    }
+  display.fillRoundRect(98, 49, 12, 3, 1, SCW); display.fillRoundRect(112, 51, 10, 3, 1, SCW);   // shapla pata
+  display.fillTriangle(102, 48, 104, 43, 106, 48, SCW); display.fillTriangle(99, 48, 101, 45, 104, 48, SCW);   // 🪷 phul
+  display.fillTriangle(104, 48, 107, 45, 109, 48, SCW);
+  display.drawRect(4, 34, 9, 8, SCW); display.drawFastHLine(3, 34, 11, SCW);   // jhuri
+  unsigned long c = t % 10000;
+  int kx = 26, ky = 40;                                        // 🧒 chhele (boshe ache)
+  display.fillCircle(kx, ky - 13, 3, SCW);                     // matha
+  display.fillRect(kx - 4, ky - 17, 9, 2, SCW); display.fillRect(kx - 2, ky - 19, 5, 2, SCW);   // tupi
+  display.drawLine(kx, ky - 10, kx, ky - 3, SCW);              // shorir
+  display.drawLine(kx, ky - 3, kx + 6, ky - 3, SCW); display.drawLine(kx + 6, ky - 3, kx + 8, ky + 3, SCW);   // pa jhule
+  bool bite = c > 5000 && c < 6200, pulling = c >= 6200 && c < 7600, holding = c >= 7600 && c < 9200;
+  int tipX = 62, tipY = 20;
+  if (bite) tipY += (int)((c / 80) % 2) * 2 + 2;
+  if (pulling) { float k = (c - 6200) / 1400.0f; tipX = 62 - (int)(k * 22); tipY = 20 - (int)(k * 8); }
+  if (holding) { tipX = 40; tipY = 12; }
+  int hx = kx + 4, hy = ky - 8;                                // haat / chhip er goṛa
+  display.drawLine(kx, ky - 8, hx, hy, SCW);
+  display.drawLine(hx, hy, tipX, tipY, SCW);                   // chhip
+  display.drawLine(hx, hy + 1, (hx + tipX) / 2, (hy + tipY) / 2 + 1, SCW);
+  if (holding) {                                               // dui haat upore, khushi
+    display.drawLine(kx, ky - 8, kx - 4, ky - 14, SCW);
+    for (int k = 0; k < 3; k++) { uint32_t h = scHash(k + c / 300); display.drawPixel(kx - 8 + h % 16, ky - 24 + (h >> 8) % 6, SCW); }
+  }
+  if (c < 6200) {                                              // 🎈 phatna + suta
+    int fx = 72, fy = 49 + (int)(sinf(t / 500.0f) * 1.2f) + (bite ? 3 + (int)((c / 90) % 2) : 0);
+    display.drawLine(tipX, tipY, fx, fy - 2, SCW);
+    display.fillCircle(fx, fy, 2, SCW); display.drawPixel(fx, fy + 1, SCB);
+    if (bite) {                                                // pani-r upor gol dheu
+      int r = 4 + (int)((c - 5000) / 150) % 7;
+      display.drawFastHLine(fx - r - 2, fy + 3, 3, SCW); display.drawFastHLine(fx + r, fy + 3, 3, SCW);
+      if (r > 6) { display.drawFastHLine(fx - r - 5, fy + 4, 3, SCW); display.drawFastHLine(fx + r + 3, fy + 4, 3, SCW); }
+    }
+  } else {                                                     // 🐟 mach suta-y jhule
+    int mx, my;
+    if (pulling) { float k = (c - 6200) / 1400.0f; mx = 72 - (int)(k * 34); my = 49 - (int)(sinf(k * 3.1416f) * 14) - (int)(k * 14); }
+    else if (holding) { mx = 38; my = 24; }
+    else { float k = (c - 9200) / 800.0f; mx = 38 - (int)(k * 30); my = 24 + (int)(k * 10); }   // jhurite
+    display.drawLine(tipX, tipY, mx, my - 4, SCW);
+    if (c < 9900) scFishDraw(mx, my, (c / 150) % 2 ? 1 : -1, 3, t);
+    if (pulling && c < 6800)                                   // pani chhitka
+      for (int k = 0; k < 5; k++) display.drawPixel(66 + k * 3, 47 - (int)((c - 6200) / 60) + (k % 2) * 3, SCW);
+  }
+}
+
+// 🎵 shurer chinho
+void scNote(int x, int y) {
+  display.fillCircle(x, y, 1, SCW); display.drawPixel(x - 1, y, SCW);
+  display.drawFastVLine(x + 1, y - 5, 5, SCW);
+  display.drawLine(x + 1, y - 5, x + 3, y - 3, SCW);
+}
+
+// 🐦 pakhi (dir 1 = dan dike mukh, sing = thot khola)
+void scSongBird(int x, int y, int dir, bool sing, bool fly, unsigned long t) {
+  display.fillCircle(x, y, 4, SCW);                            // shorir
+  display.fillCircle(x + dir * 4, y - 4, 3, SCW);              // matha
+  display.fillTriangle(x - dir * 3, y, x - dir * 9, y - 2, x - dir * 8, y + 2, SCW);   // lej
+  int bx = x + dir * 7, by = y - 4;                            // thot
+  if (sing) { display.drawLine(bx, by - 1, bx + dir * 3, by - 3, SCW); display.drawLine(bx, by + 1, bx + dir * 3, by + 2, SCW); }
+  else display.fillTriangle(bx, by - 1, bx, by + 1, bx + dir * 3, by, SCW);
+  display.drawPixel(x + dir * 5, y - 5, SCB);                  // chokh
+  if (fly) {                                                   // dana jhapta
+    int w = (t / 90) % 2 ? -6 : 2;
+    display.drawLine(x - 2, y - 1, x + dir * 1, y + w, SCW); display.drawLine(x + 2, y - 1, x + dir * 1, y + w, SCW);
+  } else {
+    display.drawLine(x - dir * 2, y - 1, x + dir * 2, y + 2, SCB);   // danar dag
+    display.drawLine(x, y + 4, x, y + 6, SCW); display.drawLine(x + dir * 2, y + 4, x + dir * 2, y + 6, SCW);   // pa
+  }
+}
+
+// 11) 🐦 Gachhe boshe pakhi gaan gay
+void scBirdSong(unsigned long t) {
+  display.fillCircle(112, 7, 5, SCW);                          // ☀️
+  scCloud((int)((t / 150 + 90) % 170) - 25, 3, SCW);
+  static const int8_t CR[5][3] = { { 26, 24, 9 }, { 38, 15, 11 }, { 51, 23, 9 }, { 31, 32, 7 }, { 46, 32, 7 } };
+  for (int k = 0; k < 5; k++) display.fillCircle(CR[k][0], CR[k][1], CR[k][2], SCW);   // 🌳 pata (upore holud)
+  for (int y = 9; y < 38; y += 4)                             // patar noksha (chhoṛano, kono "mukh" na)
+    for (int x = 20 + (y % 8); x < 60; x += 8)
+      display.drawLine(x, y, x + 2, y - 1, SCB);
+  display.fillRect(34, 36, 8, 25, SCW);                        // kando
+  display.drawFastVLine(37, 40, 18, SCB);
+  display.fillRect(40, 44, 44, 2, SCW);                        // dal
+  display.drawLine(83, 45, 90, 41, SCW); display.fillCircle(91, 40, 3, SCW);
+  display.drawFastHLine(0, 61, 128, SCW);                      // mati + ghash + phul
+  for (int x = 2; x < 128; x += 6) { display.drawLine(x, 61, x - 1, 58, SCW); display.drawLine(x, 61, x + 1, 58, SCW); }
+  for (int k = 0; k < 3; k++) { int fx = 70 + k * 20; display.drawFastVLine(fx, 55, 6, SCW); display.drawCircle(fx, 54, 2, SCW); }
+  unsigned long c = t % 14000;
+  bool s1 = (c % 3000) < 1300;                                 // pakhi 1: 3 s e 1.3 s gaan
+  scSongBird(62, 39, 1, s1 && ((c / 140) % 2), false, t);
+  for (int k = 0; k < 4; k++) {                                // ♪ bhese uthe
+    unsigned long age = (c + k * 700) % 2800;
+    if (age > 2000) continue;
+    int x = 72 + (int)(age / 40) + (int)(sinf(age / 180.0f + k) * 3), y = 34 - (int)(age / 70);
+    if (y > 2) scNote(x, y);
+  }
+  if (c > 4000) {                                              // pakhi 2: uṛe eshe pashe boshe, pore uṛe jay
+    int x2, y2; bool fly = true;
+    if (c < 6000)       { float k = (c - 4000) / 2000.0f; x2 = 140 - (int)(k * 64); y2 = 10 + (int)(k * 29); }
+    else if (c < 12000) { x2 = 76; y2 = 39; fly = false; }
+    else                { float k = (c - 12000) / 2000.0f; x2 = 76 + (int)(k * 64); y2 = 39 - (int)(k * 34); }
+    bool s2 = !fly && (c % 3000) >= 1500 && (c % 3000) < 2700;
+    scSongBird(x2, y2, -1, s2 && ((c / 140) % 2), fly, t);
+  }
+  for (int k = 0; k < 2; k++) {                                // 🍃 pata pore
+    unsigned long age = (t + k * 2500) % 5000;
+    int x = 30 + k * 16 + (int)(sinf(age / 300.0f) * 5), y = 34 + (int)(age / 190);
+    if (y < 60) { display.drawPixel(x, y, SCW); display.drawPixel(x + 1, y + 1, SCW); }
+  }
+}
+
+void drawSceneAnim(uint8_t i, unsigned long t) {
+  switch (i) {
+    case SC_RABBIT:  scRabbit(t);    break;
+    case SC_FISHING: scFishing(t);   break;
+    case SC_BIRD:    scBirdSong(t);  break;
+    case SC_FIRE:    scFireworks(t); break;
+    case SC_BEACH:   scBeach(t);     break;
+    case SC_VILLAGE: scVillage(t);   break;
+    case SC_RAIN:    scRain(t);      break;
+    case SC_STARS:   scStars(t);     break;
+    case SC_FISH:    scFish(t);      break;
+    case SC_TRAIN:   scTrain(t);     break;
+    case SC_SPACE:   scSpace(t);     break;
+  }
+}
+
+void sceneSet(int i) { scIdx = (uint8_t)(((i % SC_N) + SC_N) % SC_N); scSince = now; }
+
+// ===========================================================
+//  📋 2 tap er menu: tap = porer, chepe dhoro = kholo. 3-8 tap shortcut aager motoi.
+// ===========================================================
+enum { MN_LOVE, MN_SONG, MN_FUNNY, MN_CLOCK, MN_GAME, MN_ANIM, MN_PET, MN_ABOUT, MN_BAT, MN_LANG, MN_SET, MN_EXIT, MN_N };
+enum { ST_SOUND, ST_NIGHT, ST_FMT, ST_BACK, ST_N };
+static const BnText* const MN_NAME[MN_N] PROGMEM = { &BN_MN_LOVE, &BN_MN_SONG, &BN_MN_FUNNY, &BN_MN_CLOCK, &BN_MN_GAME, &BN_GM_SCENE,
+                                                     &BN_MN_PET, &BN_MN_ABOUT, &BN_MN_BAT, &BN_MN_LANG, &BN_MN_SET, &BN_GM_EXIT };
+static const BnText* const ST_NAME[ST_N] PROGMEM = { &BN_ST_SOUND, &BN_ST_NIGHT, &BN_ST_FMT, &BN_ST_BACK };
+uint8_t mnSel = 0;
+bool mnInSet = false;                                  // ⚙️ setting er bhitore
+unsigned long mnLast = 0, mnChanged = 0;
+const unsigned long MN_IDLE_MS = 20000UL;
+
+void menuOpen() {
+  menuMode = true; mnInSet = false; mnSel = 0;
+  mnBack = -1; mnBackAt = 0; clockBackScr = false;
+  mnLast = mnChanged = now;
+  clockMode = false; msgUntil = 0;
+  PLAY(S_TICK);
+  Serial.println(F("📋 Menu khola"));
+}
+
+String menuOpenAt(int i, bool set) {                  // phone / test theke
+  if (gameMode) gameExit();
+  menuOpen();
+  mnInSet = set;
+  mnSel = (uint8_t)constrain(i, 0, (set ? ST_N : MN_N) - 1);
+  return F("📋 menu");
+}
+
+bool menuBack() {                                      // menu theke khola jinish shesh: abar menu te (oi item e)
+  if (mnBack < 0) return false;
+  int i = mnBack;
+  mnBack = -1; mnBackAt = 0;
+  clockBackScr = false;
+  menuOpenAt(i, false);
+  return true;
+}
+
+bool mnSongCtx() { return mnBack == MN_SONG; }
+
+void menuReturnCheck() {                               // loop theke: kokhon menu te ferot jabo
+  if (mnBack < 0 || menuMode) return;
+  if (mnBackAt && (long)(now - mnBackAt) >= 0) { mnBackAt = 0; if (!gameMode && !clockMode) menuBack(); return; }
+  if (mnBack == MN_SONG && mood != MUSIC) { menuBack(); return; }                 // gaan shesh / thamano
+  if ((mnBack == MN_ABOUT && !qrUntil) || (mnBack == MN_BAT && !batShowUntil)) menuBack();
+}
+
+void menuClose() {
+  menuMode = false; mnInSet = false;
+  touchIgnore = digitalRead(PIN_TOUCH) == HIGH;        // dhore thaka angul chharle onno kichu korbe na
+  lastActivity = now;
+}
+
+// ---- Icon (24 x 22 er moto, majhe cx, cy) ----
+void mnHeart(int cx, int cy, int s) {
+  display.fillCircle(cx - s / 2 - 1, cy - 2, s / 2 + 1, SSD1306_WHITE); display.fillCircle(cx + s / 2 + 1, cy - 2, s / 2 + 1, SSD1306_WHITE);
+  display.fillTriangle(cx - s - 2, cy, cx + s + 2, cy, cx, cy + s + 3, SSD1306_WHITE);
+}
+void mnClockIcon(int cx, int cy, int r) {
+  display.drawCircle(cx, cy, r, SSD1306_WHITE); display.drawCircle(cx, cy, r - 1, SSD1306_WHITE);
+  display.drawLine(cx, cy, cx, cy - r + 4, SSD1306_WHITE);
+  float a = now / 400.0f;
+  display.drawLine(cx, cy, cx + (int)(cosf(a) * (r - 3)), cy + (int)(sinf(a) * (r - 3)), SSD1306_WHITE);
+}
+void mnMoon(int cx, int cy) { display.fillCircle(cx, cy, 9, SSD1306_WHITE); display.fillCircle(cx + 4, cy - 3, 8, SSD1306_BLACK); }
+void mnSpeaker(int cx, int cy, bool on) {
+  display.fillRect(cx - 10, cy - 3, 5, 7, SSD1306_WHITE);
+  display.fillTriangle(cx - 6, cy, cx + 1, cy - 8, cx + 1, cy + 8, SSD1306_WHITE);
+  if (on) { for (int r = 5; r <= 9; r += 4) for (int a = -40; a <= 40; a += 8) display.drawPixel(cx + 2 + (int)(cosf(a * 0.01745f) * r), cy + (int)(sinf(a * 0.01745f) * r), SSD1306_WHITE); }
+  else { display.drawLine(cx + 4, cy - 4, cx + 11, cy + 4, SSD1306_WHITE); display.drawLine(cx + 4, cy + 4, cx + 11, cy - 4, SSD1306_WHITE); }
+}
+
+void menuIcon(int i, int cx, int cy) {
+  int bob = (int)roundf(sinf(now / 300.0f));
+  cy += bob;
+  switch (i) {
+    case MN_LOVE: mnHeart(cx, cy - 2, 8 + ((now / 400) % 2)); break;          // ❤️ dhuk-dhuk
+    case MN_SONG:                                                             // 🎵
+      display.fillCircle(cx - 7, cy + 6, 3, SSD1306_WHITE); display.fillCircle(cx + 6, cy + 4, 3, SSD1306_WHITE);
+      display.fillRect(cx - 5, cy - 8, 2, 14, SSD1306_WHITE); display.fillRect(cx + 8, cy - 10, 2, 14, SSD1306_WHITE);
+      display.fillTriangle(cx - 5, cy - 8, cx + 10, cy - 11, cx + 10, cy - 8, SSD1306_WHITE);
+      display.fillTriangle(cx - 5, cy - 8, cx - 5, cy - 5, cx + 10, cy - 8, SSD1306_WHITE);
+      break;
+    case MN_FUNNY:                                                            // 😆
+      display.drawCircle(cx, cy, 11, SSD1306_WHITE);
+      display.drawLine(cx - 7, cy - 5, cx - 4, cy - 3, SSD1306_WHITE); display.drawLine(cx - 4, cy - 3, cx - 7, cy - 1, SSD1306_WHITE);
+      display.drawLine(cx + 7, cy - 5, cx + 4, cy - 3, SSD1306_WHITE); display.drawLine(cx + 4, cy - 3, cx + 7, cy - 1, SSD1306_WHITE);
+      display.fillCircle(cx, cy + 2, 6, SSD1306_WHITE); display.fillRect(cx - 6, cy - 4, 13, 6, SSD1306_BLACK);
+      break;
+    case MN_CLOCK: mnClockIcon(cx, cy, 10); break;
+    case MN_GAME:                                                             // 🎮
+      display.fillRoundRect(cx - 14, cy - 7, 28, 15, 7, SSD1306_WHITE);
+      display.fillRect(cx - 10, cy - 1, 7, 2, SSD1306_BLACK); display.fillRect(cx - 8, cy - 3, 2, 6, SSD1306_BLACK);
+      display.fillCircle(cx + 6, cy - 2, 1, SSD1306_BLACK); display.fillCircle(cx + 9, cy + 1, 1, SSD1306_BLACK);
+      break;
+    case MN_ANIM: drawGameIcon(G_SCENE, cx, cy + 1); break;
+    case MN_PET:                                                              // 🍎
+      display.fillCircle(cx, cy + 2, 9, SSD1306_WHITE);
+      display.drawLine(cx, cy - 7, cx + 2, cy - 11, SSD1306_WHITE);
+      display.fillTriangle(cx + 2, cy - 10, cx + 9, cy - 12, cx + 6, cy - 7, SSD1306_WHITE);
+      display.fillCircle(cx - 4, cy - 2, 2, SSD1306_BLACK);
+      break;
+    case MN_ABOUT:                                                            // 🐙 choto QR
+      for (int k = 0; k < 3; k++) {
+        int qx = cx - 11 + (k == 1 ? 16 : 0), qy = cy - 11 + (k == 2 ? 16 : 0);
+        display.fillRect(qx, qy, 7, 7, SSD1306_WHITE); display.fillRect(qx + 1, qy + 1, 5, 5, SSD1306_BLACK); display.fillRect(qx + 2, qy + 2, 3, 3, SSD1306_WHITE);
+      }
+      for (int k = 0; k < 40; k++) { uint32_t h = scHash(k + 77); int x = (h % 11) * 2, y = ((h >> 8) % 11) * 2;
+        if ((x < 8 && y < 8) || (x > 13 && y < 8) || (x < 8 && y > 13)) continue;
+        display.fillRect(cx - 11 + x, cy - 11 + y, 2, 2, SSD1306_WHITE); }
+      break;
+    case MN_BAT: {                                                            // 🔋
+      display.drawRect(cx - 13, cy - 7, 24, 14, SSD1306_WHITE); display.fillRect(cx + 11, cy - 3, 3, 6, SSD1306_WHITE);
+      int p = batOk ? batPct : (int)((now / 300) % 100);
+      display.fillRect(cx - 11, cy - 5, 20 * p / 100, 10, SSD1306_WHITE);
+      break;
+    }
+    case MN_LANG:                                                             // 🌐
+      display.drawCircle(cx, cy, 10, SSD1306_WHITE); display.drawFastHLine(cx - 10, cy, 21, SSD1306_WHITE);
+      display.drawFastVLine(cx, cy - 10, 21, SSD1306_WHITE);
+      for (int a = 0; a < 36; a++) { float t = a * 0.1745f; display.drawPixel(cx + (int)(cosf(t) * 5), cy + (int)(sinf(t) * 10), SSD1306_WHITE); }
+      display.drawFastHLine(cx - 8, cy - 5, 17, SSD1306_WHITE); display.drawFastHLine(cx - 8, cy + 5, 17, SSD1306_WHITE);
+      break;
+    case MN_SET: {                                                            // ⚙️ ghurche
+      float r0 = now / 900.0f;
+      for (int k = 0; k < 8; k++) { float a = r0 + k * 0.785f; display.fillCircle(cx + (int)(cosf(a) * 9), cy + (int)(sinf(a) * 9), 2, SSD1306_WHITE); }
+      display.fillCircle(cx, cy, 8, SSD1306_WHITE); display.fillCircle(cx, cy, 3, SSD1306_BLACK);
+      break;
+    }
+    case MN_EXIT:                                                             // 🚪 →
+      display.drawRect(cx - 12, cy - 10, 12, 21, SSD1306_WHITE); display.fillRect(cx - 12, cy - 10, 3, 21, SSD1306_WHITE);
+      display.drawLine(cx - 3, cy, cx + 11, cy, SSD1306_WHITE); display.drawLine(cx - 3, cy + 1, cx + 11, cy + 1, SSD1306_WHITE);
+      display.fillTriangle(cx + 13, cy, cx + 7, cy - 5, cx + 7, cy + 6, SSD1306_WHITE);
+      break;
+  }
+}
+
+void mnState(const char* s, int x) {                   // ON / OFF / 24h boro kore
+  printFont(&FreeSansBold12pt7b, x, 40, s);
+}
+
+void menuDraw() {
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  if (mnInSet) drawBandBitmap(((now / 2500) % 2) ? BN_MN_HINT : BN_ST_T);
+  else         drawBandBitmap(((now / 2500) % 2) ? BN_MN_HINT : BN_MN_T);
+  int xo = 0;                                          // notun item dan dik theke ashe
+  unsigned long since = now - mnChanged;
+  if (since < 180) xo = (int)(40 * (1 - since / 180.0f));
+  if (mnInSet) {
+    switch (mnSel) {
+      case ST_SOUND: mnSpeaker(40 + xo, 31, soundOn); mnState(soundOn ? "ON" : "OFF", 62 + xo); break;
+      case ST_NIGHT: mnMoon(42 + xo, 31); mnState(nightOn ? "ON" : "OFF", 62 + xo); break;
+      case ST_FMT:   mnClockIcon(40 + xo, 31, 10); mnState(use24 ? "24h" : "12h", 60 + xo); break;
+      case ST_BACK:                                    // ↩
+        display.drawLine(52 + xo, 31, 76 + xo, 31, SSD1306_WHITE); display.drawLine(52 + xo, 32, 76 + xo, 32, SSD1306_WHITE);
+        display.fillTriangle(48 + xo, 31, 56 + xo, 24, 56 + xo, 39, SSD1306_WHITE);
+        break;
+    }
+    drawCenterBn(*ST_NAME[mnSel], 43);
+  } else {
+    menuIcon(mnSel, 64 + xo, 30);
+    drawCenterBn(*MN_NAME[mnSel], 43);
+  }
+  display.fillTriangle(2, 29, 7, 24, 7, 34, SSD1306_WHITE);              // < >
+  display.fillTriangle(125, 29, 120, 24, 120, 34, SSD1306_WHITE);
+  int n = mnInSet ? ST_N : MN_N;                                         // kototomo: choto bindu
+  int x0 = 64 - n * 2;
+  for (int k = 0; k < n; k++) display.drawPixel(x0 + k * 4, 17, SSD1306_WHITE);
+  display.fillRect(x0 + mnSel * 4 - 1, 16, 3, 2, SSD1306_WHITE);
+  display.display();
+}
+
+void menuNext() {
+  mnSel = (mnSel + 1) % (mnInSet ? ST_N : MN_N);
+  mnChanged = now;
+  PLAY(S_TICK);
+}
+
+void menuDo() {                                        // chepe dhorle: item kholo
+  mnLast = now;
+  if (mnInSet) {
+    switch (mnSel) {
+      case ST_SOUND: cmdMute(); break;
+      case ST_NIGHT: nightOn = !nightOn; saveNight(); nightCheck(); break;
+      case ST_FMT:   toggleTimeFormat(); break;
+      case ST_BACK:  mnInSet = false; mnSel = MN_SET; break;
+    }
+    mnChanged = now;
+    return;
+  }
+  switch (mnSel) {
+    case MN_LANG:                                      // menu e thaki: naam notun bhashay (mood / hat nare na)
+      langEn = !langEn; saveLang();
+      playSound(FX_TADA, sizeof(FX_TADA) / sizeof(FX_TADA[0]));
+      mnChanged = now;
+      return;
+    case MN_SET:  mnInSet = true; mnSel = 0; mnChanged = now; return;
+    default: break;
+  }
+  uint8_t s = mnSel;
+  menuClose();
+  mnBack = (s == MN_EXIT) ? -1 : s;                    // shesh hole / "back" dile ei item e ferot
+  switch (s) {
+    case MN_LOVE:  setMood(LOVE, 3000); petPlay(2); mnBackAt = now + 3000; break;
+    case MN_SONG:  playNextSong(); break;
+    case MN_FUNNY: playFunnySound(); mnBackAt = bandOverrideUntil; break;
+    case MN_CLOCK: setClockMode(true); break;
+    case MN_GAME:  gameEnter(); break;
+    case MN_ANIM:  sceneStart(""); break;
+    case MN_PET:   setClockMode(true); clockView = CV_PET; viewChangedAt = now; break;
+    case MN_ABOUT: showQR(); break;
+    case MN_BAT:   showBattery(); break;
+    case MN_EXIT:  setMood(HAPPY, 1200); break;
+  }
+}
+
+void menuTouch(bool t) {
+  static unsigned long down = 0;
+  static bool fired = false;
+  if (t && !touchPrev) { down = now; fired = false; }
+  if (t && !fired && now - down > 900) { fired = true; PLAY(S_BEEP); }   // chepe dhora bujhlam (beep)
+  if (!t && touchPrev) {
+    if (fired) menuDo();                               // angul chharle kholo (khela ba onno kichu bhul kore touch pabe na)
+    else if (now - down < 900) menuNext();
+  }
+  if (t) { lastActivity = now; mnLast = now; }
+}
+
+void menuLoop() {
+  if (now - mnLast > MN_IDLE_MS) { menuClose(); setMood(HAPPY, 1200); return; }   // 20 s kichu na: bondho
+  menuDraw();
+}
+
+// Phone / Telegram theke: "auto" ba 0-7 ba naam
+String sceneStart(const String& s) {
+  String a = s; a.trim(); a.toLowerCase();
+  int i = -1;
+  if (a.length() && isdigit((uint8_t)a[0])) i = a.toInt() - (a.toInt() >= 1 && a.toInt() <= SC_N ? 1 : 0);
+  else if (a.startsWith("fire") || a.startsWith("atosh") || a.startsWith("baji")) i = SC_FIRE;
+  else if (a.startsWith("beach") || a.startsWith("sun") || a.startsWith("sea") || a.startsWith("shagor")) i = SC_BEACH;
+  else if (a.startsWith("vill") || a.startsWith("gram") || a.startsWith("gaon")) i = SC_VILLAGE;
+  else if (a.startsWith("rain") || a.startsWith("brishti")) i = SC_RAIN;
+  else if (a.startsWith("star") || a.startsWith("tara") || a.startsWith("night")) i = SC_STARS;
+  else if (a.startsWith("fishing") || a.startsWith("pukur") || a.startsWith("borshi")) i = SC_FISHING;
+  else if (a.startsWith("rabbit") || a.startsWith("bunny") || a.startsWith("khorgosh") || a.startsWith("gajor")) i = SC_RABBIT;
+  else if (a.startsWith("bird") || a.startsWith("pakhi") || a.startsWith("gaach")) i = SC_BIRD;
+  else if (a.startsWith("fish") || a.startsWith("mach") || a.startsWith("aqua")) i = SC_FISH;
+  else if (a.startsWith("train") || a.startsWith("rail")) i = SC_TRAIN;
+  else if (a.startsWith("space") || a.startsWith("rocket") || a.startsWith("moho")) i = SC_SPACE;
+  if (i >= 0 && i < SC_N) { scAuto = false; }
+  else { scAuto = true; i = scIdx; }
+  if (!gameMode) gameEnter();
+  scFromGameMenu = false;                              // dhorle soja ber (2-tap menu theke hole menu te)
+  gameStart(G_SCENE);
+  sceneSet(i);
+  gLastInput = now;
+  String r = F("🎬 PetBot e animation: ");
+  r += SC_EN[scIdx];
+  r += scAuto ? F(" (auto: proti 25 second e bodlabe)") : F("");
+  return r;
+}
 static const BnText* const G8_ANS[12] PROGMEM = { &BN_8A1, &BN_8A2, &BN_8A3, &BN_8A4, &BN_8A5, &BN_8A6,
                                           &BN_8A7, &BN_8A8, &BN_8A9, &BN_8A10, &BN_8A11, &BN_8A12 };
 static const char G8_UTF[] PROGMEM = "হ্যাঁ, অবশ্যই! ✅|নিশ্চয়ই হবে! ✨|মনে হয় হ্যাঁ 🙂|সম্ভাবনা ভালো 👍|তারারা বলছে হ্যাঁ ⭐|"
@@ -4383,11 +5734,14 @@ void gameExit() {
   setMood(HAPPY, 2000);
   PLAY(S_CLK_OFF);
   Serial.println(F("Khela bondho"));
+  if (mnBack == MN_GAME || mnBack == MN_ANIM) menuBack();  // 📋 menu theke eshechilo: menu te ferot
 }
 
 void gameStart(uint8_t g) {
   gameId = g; gState = 0; gT = now;
   if (g == G_EXIT) { gameExit(); return; }
+  if (g == G_SCENE) scSince = now;                     // 🎬 notun kore shuru (naam dekhabe)
+  petPlay(5);                                          // 🐣 khela = khub khushi
   if (g == G_DICE && gVal < 1) gVal = 6;
   PLAY(S_START);
   Serial.printf_P(PSTR("Khela shuru: %d\n"), g);
@@ -4456,6 +5810,13 @@ void drawBasket(int x, int y) {                        // x = bam, 20 px chowra
 
 void drawGameIcon(int g, int cx, int cy) {
   switch (g) {
+    case G_SCENE:                                       // 📺 choto TV te shurjasto
+      display.drawRoundRect(cx - 15, cy - 10, 30, 20, 3, SSD1306_WHITE);
+      display.drawLine(cx - 5, cy - 13, cx, cy - 10, SSD1306_WHITE); display.drawLine(cx + 5, cy - 13, cx, cy - 10, SSD1306_WHITE);
+      display.fillCircle(cx, cy + 2, 5, SSD1306_WHITE);
+      display.fillRect(cx - 12, cy + 3, 24, 6, SSD1306_BLACK);
+      display.drawFastHLine(cx - 11, cy + 4, 22, SSD1306_WHITE); display.drawFastHLine(cx - 7, cy + 7, 14, SSD1306_WHITE);
+      break;
     case G_8BALL: draw8Ball(cx, cy, 12); break;
     case G_DICE:  drawDie(cx - 12, cy - 12, 24, 5); break;
     case G_RPS:   drawRpsIcon(0, cx - 26, cy); drawRpsIcon(1, cx, cy); drawRpsIcon(2, cx + 26, cy); break;
@@ -4760,11 +6121,20 @@ void gameEvent(uint8_t e) {
   switch (gameId) {
     case G_MENU:
       if (e == GE_TAP) { menuSel = menuSel % (G_N - 1) + 1; PLAY(S_TICK); gT = now; }
-      else if (e == GE_HOLD) gameStart(menuSel);
+      else if (e == GE_HOLD) { scFromGameMenu = true; scAuto = true; gameStart(menuSel); }
       break;
 
     case G_8BALL:
       if ((e == GE_TAP || e == GE_SHAKE) && gState != 1) { gState = 1; gT = now; gVal = random(12); PLAY(S_RATTLE); }
+      break;
+
+    case G_SCENE:                                               // 🎬 tap = porer, dhoro = ferot, jhakuni = random
+      if (e == GE_TAP)        { sceneSet(scIdx + 1); PLAY(S_TICK); }
+      else if (e == GE_HOLD) {
+        if (scFromGameMenu) { gameId = G_MENU; gState = 0; PLAY(S_CLK_OFF); }   // khelar menu theke eshechilo
+        else gameExit();                                                         // 2-tap menu (ba home) e ferot
+      }
+      else if (e == GE_SHAKE) { sceneSet(scIdx + 1 + random(SC_N - 1)); }
       break;
 
     case G_DICE:
@@ -4889,7 +6259,7 @@ void gameLoop() {
     if (!selfMove && shake && now - gShakeAt > 1200 && !tiltGame) { gShakeAt = now; gameEvent(GE_SHAKE); }
   }
   bool playing = gState == 1 && (gameId == G_CATCH || gameId == G_FLAP || gameId == G_HOLE) ||
-                 (gameId == G_SIMON && (gState == 1 || gState == 2));
+                 (gameId == G_SIMON && (gState == 1 || gState == 2)) || gameId == G_SCENE;   // 🎬 animation nijei bondho hoy na
   if (playing) gLastInput = now;                       // khela cholle nijei bondho hobe na
   if (now - gLastInput > 90000UL) { gameExit(); return; }
 
@@ -4898,6 +6268,17 @@ void gameLoop() {
   unsigned long el = now - gT;
 
   switch (gameId) {
+    case G_SCENE: {                                    // 🎬 animation
+      if (scAuto && now - scSince > SC_AUTO_MS) sceneSet(scIdx + 1);
+      unsigned long st = now - scSince;
+      drawSceneAnim(scIdx, st);
+      if (st < 2300) {                                 // shurute drishyer naam
+        display.fillRect(0, 45, 128, 19, SCB);
+        drawCenterBn(*SC_NAME[scIdx], 45);
+      }
+      break;
+    }
+
     case G_MENU: {
       drawBandBitmap(((now / 2500) % 2) ? BN_GM_HINT : BN_GM_T);
       int bob = (int)roundf(sinf(now / 300.0f) * 2);
@@ -5386,6 +6767,297 @@ int parseClock(const String& s, int& h, int& m, bool pmGuess) {
   if (!am && !pm && pmGuess && h >= 6 && h <= 11) h += 12;
   if (h > 23 || m > 59) return 0;
   return i;
+}
+
+// ---------------- 🌙 Night mode ----------------
+// EEPROM 405 = 0xE1 chinho, 406 bit0 = chalu, 407-410 = shuru ghonta/min, shesh ghonta/min
+void loadNight() {
+  if (EEPROM.read(405) != 0xE1) return;
+  nightOn = EEPROM.read(406) & 1;
+  uint8_t sh = EEPROM.read(407), sm = EEPROM.read(408), eh = EEPROM.read(409), em = EEPROM.read(410);
+  if (sh < 24 && sm < 60 && eh < 24 && em < 60) { nightSH = sh; nightSM = sm; nightEH = eh; nightEM = em; }
+}
+
+void saveNight() {
+  EEPROM.write(405, 0xE1); EEPROM.write(406, nightOn ? 1 : 0);
+  EEPROM.write(407, nightSH); EEPROM.write(408, nightSM); EEPROM.write(409, nightEH); EEPROM.write(410, nightEM);
+  EEPROM.commit();
+}
+
+bool nightInWindow(int nm) {                           // nm = aj er minute (0-1439); 23:00-07:00 er moto rat periye jay
+  int s = nightSH * 60 + nightSM, e = nightEH * 60 + nightEM;
+  if (s == e) return false;
+  return s < e ? (nm >= s && nm < e) : (nm >= s || nm < e);
+}
+
+void nightApply(bool on) {
+  if (on == nightNow) return;
+  nightNow = on;
+  display.dim(on && !alarmRinging);
+  if (on) {
+    if (soundOn) { soundOn = false; nightMutedByMe = true; if (!alarmRinging) { noTone(PIN_BUZZER); sndNotes = nullptr; } }
+    Serial.println(F("🌙 Night mode shuru"));
+  } else {
+    if (nightMutedByMe && !soundOn) soundOn = true;
+    nightMutedByMe = false;
+    lastActivity = now;                                // shokale ghum theke uthe shadharon din shuru
+    if (mood == SLEEP && !clockMode && !gameMode && !messageActive()) setMood(STRETCH, 2800);   // 🙆 shuprovat: gaa-moda diye jaga
+    Serial.println(F("☀️ Night mode shesh"));
+  }
+}
+
+void nightLoop() {
+  static unsigned long last = 0;
+  if (now - last < 1000) return;
+  last = now;
+  nightCheck();
+}
+
+void nightCheck() {                                    // ekhoni hishab (setting bodlale shathe shathe)
+  static bool bright = false;
+  bool want = false;
+  if (nightOn && timeValid()) {
+    time_t t = time(nullptr);
+    struct tm* tm = localtime(&t);
+    want = nightInWindow(tm->tm_hour * 60 + tm->tm_min);
+  }
+  nightApply(want);
+  bool b = nightNow && alarmRinging;                   // ⏰ alarm bajle pura alo (ghum bhangate)
+  if (b != bright) { bright = b; display.dim(nightNow && !b); }
+}
+
+String nightRangeText() {
+  return fmt12(nightSH, nightSM) + F(" - ") + fmt12(nightEH, nightEM);
+}
+
+String nightJson() {
+  char b[48];
+  snprintf(b, sizeof(b), "{\"on\":%d,\"s\":\"%02d:%02d\",\"e\":\"%02d:%02d\",\"now\":%d}",
+           nightOn ? 1 : 0, nightSH, nightSM, nightEH, nightEM, nightNow ? 1 : 0);
+  return b;
+}
+
+// "11pm-7am", "23:00 07:00", "11pm to 7am" -> shomoy bodlao (ferot false = bujhini)
+bool nightSetRange(const String& s, bool guessPm) {
+  String x = s; x.toLowerCase(); x.trim();
+  int sh, sm, eh, em;
+  int n = parseClock(x, sh, sm, guessPm);             // Telegram: am/pm na likhle 6-11 ke rat dhori
+  if (!n) return false;
+  String r = x.substring(n); r.trim();
+  while (r.length() && (r[0] == '-' || r[0] == ' ')) r.remove(0, 1);
+  if (r.startsWith("to")) { r.remove(0, 2); r.trim(); }
+  if (!parseClock(r, eh, em, false)) return false;
+  if (sh * 60 + sm == eh * 60 + em) return false;
+  nightSH = sh; nightSM = sm; nightEH = eh; nightEM = em;
+  return true;
+}
+
+String tgNightCommand(const String& rest) {            // /night, /night on|off, /night 11pm-7am
+  String a = rest; a.trim(); a.toLowerCase();
+  if (a == "on")  { nightOn = true;  saveNight(); }
+  else if (a == "off") { nightOn = false; saveNight(); }
+  else if (a.length()) {
+    if (!nightSetRange(a, true)) return F("🤔 Shomoy bujhini. Lekho: /night 11pm-7am ba /night 23:00 06:30");
+    nightOn = true; saveNight();
+  }
+  nightCheck();
+  String r = nightOn ? F("🌙 Night mode chalu: ") : F("☀️ Night mode bondho (");
+  r += nightRangeText();
+  r += nightOn ? F("\nRate screen er alo kom, shobdo bondho (alarm baje), druto ghum.") : F(")");
+  if (nightOn && nightNow) r += F("\n😴 Ekhon rat cholche.");
+  r += nightOn ? F("\nBondho: /night off · Shomoy: /night 11pm-7am") : F("\nChalu: /night on");
+  return r;
+}
+
+// ---------------- 🐣 Pet care: khida, khushi, level, streak ----------------
+// EEPROM 411 = 0xB7, 412 pet bhora (0-100), 413 khushi (0-100), 414-415 xp, 416 level,
+// 417-418 streak (din), 419-420 aj er din, 421 aj koybar khawano holo
+#define EE_PET 411
+uint8_t petFood = 70, petFun = 70, petLevel = 1, petFedToday = 0;
+uint16_t petXp = 0, petStreak = 0, petDay = 0;
+bool petDirty = false, petHungryTold = false, petLvPending = false;
+unsigned long petNextHungryAt = 0, petLastPlayAt = 0, petSavedAt = 0;
+uint8_t petFoodTick = 0, petFunTick = 0;
+
+uint16_t petXpNeed() { return 80 + petLevel * 40; }      // Lv1 = 120 xp, Lv2 = 160 ...
+
+void petLoad() {
+  if (EEPROM.read(EE_PET) != 0xB7) return;
+  petFood = min(100, (int)EEPROM.read(EE_PET + 1));
+  petFun  = min(100, (int)EEPROM.read(EE_PET + 2));
+  petXp   = EEPROM.read(EE_PET + 3) | (EEPROM.read(EE_PET + 4) << 8);
+  petLevel = max(1, (int)EEPROM.read(EE_PET + 5));
+  petStreak = EEPROM.read(EE_PET + 6) | (EEPROM.read(EE_PET + 7) << 8);
+  petDay    = EEPROM.read(EE_PET + 8) | (EEPROM.read(EE_PET + 9) << 8);
+  petFedToday = EEPROM.read(EE_PET + 10);
+}
+
+void petSave() {
+  EEPROM.write(EE_PET, 0xB7);
+  EEPROM.write(EE_PET + 1, petFood); EEPROM.write(EE_PET + 2, petFun);
+  EEPROM.write(EE_PET + 3, petXp & 0xFF); EEPROM.write(EE_PET + 4, petXp >> 8);
+  EEPROM.write(EE_PET + 5, petLevel);
+  EEPROM.write(EE_PET + 6, petStreak & 0xFF); EEPROM.write(EE_PET + 7, petStreak >> 8);
+  EEPROM.write(EE_PET + 8, petDay & 0xFF); EEPROM.write(EE_PET + 9, petDay >> 8);
+  EEPROM.write(EE_PET + 10, petFedToday);
+  EEPROM.commit();                                     // flash bachate: shudhu khawano / level / din bodlale / 3 ghonta por
+  petDirty = false; petSavedAt = now;
+}
+
+void petAddXp(int n) {
+  petXp += n; petDirty = true;
+  if (petXp < petXpNeed()) return;
+  petXp -= petXpNeed();
+  if (petLevel < 99) petLevel++;
+  petLvPending = true;                                 // khawar drishyo shesh hole firework
+  petSave();
+  String m = F("⭐ PetBot level up! Ekhon Level "); m += petLevel; m += F(" 🎉");
+  tgNotify(m);
+}
+
+void petPlay(int pts) {                                // touch / khela / gaan / message: khushi barbe
+  if (now - petLastPlayAt < 15000UL && pts < 5) return;   // ghon ghon touch e beshi na
+  petLastPlayAt = now;
+  petFun = min(100, (int)petFun + pts * 3);
+  petAddXp(pts);
+}
+
+String petBar(int v) {
+  String s; int n = (v + 5) / 10;
+  for (int i = 0; i < 10; i++) s += i < n ? "▰" : "▱";
+  return s;
+}
+
+String petText() {
+  String s = F("🐣 PetBot er obostha\n\n");
+  s += F("🍎 Pet bhora: "); s += petBar(petFood); s += ' '; s += petFood; s += F("%\n");
+  s += F("❤️ Khushi:    "); s += petBar(petFun);  s += ' '; s += petFun;  s += F("%\n");
+  s += F("⭐ Level "); s += petLevel; s += F(" ("); s += petXp; s += '/'; s += petXpNeed(); s += F(" xp)\n");
+  s += F("🔥 Streak: "); s += petStreak; s += F(" din (protidin 2 bar khawao)\n");
+  s += F("🍽️ Aj khawano: "); s += petFedToday; s += F(" bar\n\n");
+  if (petFood < 30) s += F("😢 Khida peyeche! /feed");
+  else if (petFun < 30) s += F("🥺 Keu khele na... ektu chhuye dao ba /game");
+  else s += F("😊 Bhalo achi! /feed khawate, /game khelte");
+  return s;
+}
+
+String petJson() {
+  char b[96];
+  snprintf(b, sizeof(b), "{\"food\":%d,\"fun\":%d,\"lv\":%d,\"xp\":%d,\"need\":%d,\"streak\":%d,\"fed\":%d}",
+           petFood, petFun, petLevel, petXp, petXpNeed(), petStreak, petFedToday);
+  return b;
+}
+
+String petFeed() {                                     // 🍎 khawano (phone / Telegram / PET screen e chepe dhora)
+  bool canShow = !gameMode && !messageActive() && !alarmRinging;
+  if (canShow && clockMode) setClockMode(false);
+  if (petFood >= 90) {
+    if (canShow) { setMood(CONFUSED, 2500); showBandBn(BN_PET_FULL, 2500); }
+    return F("😅 Pet bhora! Ekhon ar khabo na. Pore khawao.");
+  }
+  petFood = min(100, (int)petFood + 35);
+  if (petFedToday < 250) petFedToday++;
+  petHungryTold = false;
+  petNextHungryAt = now + 20UL * 60000UL;
+  if (canShow) { startScene(FS_FOOD, HAPPY, BN_PET_YUM, 3600); PLAY(S_HAPPY); }
+  petAddXp(10);
+  petSave();
+  String r = F("🍎 Yum! Dhonnobad!\n\n"); r += petText();
+  return r;
+}
+
+void petLoop() {
+  if (petLvPending && !festActive() && !gameMode && !clockMode && !messageActive()) {   // ⭐ level up firework
+    petLvPending = false;
+    startScene(FS_FIREWORK, EXCITED, BN_PET_LVUP, 4500);
+    PLAY(S_EXCITED);
+  }
+  static unsigned long last = 0;
+  if (now - last < 60000UL) return;                    // proti minute
+  last = now;
+  if (!timeValid()) return;
+  time_t t = time(nullptr);
+  struct tm* tm = localtime(&t);
+  uint16_t day = (uint16_t)((tm->tm_year % 100) * 400 + tm->tm_yday);
+  if (day != petDay) {                                 // 📅 notun din: streak hishab
+    if (petDay) {                                      // (prothom bar shudhu din ta mone rakhi, aj er khawano thakuk)
+      petStreak = (day == petDay + 1 && petFedToday >= 2) ? petStreak + 1 : 0;   // kal 2 bar khawale +1, na hole abar 0
+      petFedToday = 0;
+    }
+    petDay = day;
+    petSave();
+  }
+  if (nightNow || flipDnd) return;                     // 😴 ghumanto: khida / mon kharap bare na
+  if (++petFoodTick >= 12) { petFoodTick = 0; if (petFood) petFood--; petDirty = true; }   // ~20 ghonta te khali
+  if (++petFunTick >= 6)   { petFunTick = 0;  if (petFun)  petFun--;  petDirty = true; }   // ~10 ghonta te khali
+  if (petFood < 30) {
+    if (!petHungryTold) { petHungryTold = true; tgNotify(F("🍎 PetBot er khida peyeche! Khawate: /feed")); }
+    if ((long)(now - petNextHungryAt) >= 0 && mood == NORMAL && !clockMode && !gameMode && !messageActive() && !festActive()) {
+      setMood(petFood < 10 ? SAD : PLEAD, 5000);
+      showBandBn(BN_PET_HUNGRY, 5000);
+      petNextHungryAt = now + 20UL * 60000UL;
+    }
+  }
+  if (petDirty && now - petSavedAt > 3UL * 3600000UL) petSave();
+}
+
+// 🍎 Khawar drishyo: khushi chokh, apple e kamor por kamor, gura pore
+void drawFoodScene() {
+  unsigned long el = now - festSince;
+  for (int k = 0; k < 2; k++) {                        // ^ ^ khushi chokh
+    display.drawLine(30, 30 - k, 38, 23 - k, SSD1306_WHITE); display.drawLine(38, 23 - k, 46, 30 - k, SSD1306_WHITE);
+    display.drawLine(82, 30 - k, 90, 23 - k, SSD1306_WHITE); display.drawLine(90, 23 - k, 98, 30 - k, SSD1306_WHITE);
+  }
+  int bob = (el / 160) % 2;                            // chibano
+  int cx = 64, cy = 47 + bob;
+  display.fillCircle(cx, cy, 12, SSD1306_WHITE);
+  display.drawLine(cx, cy - 12, cx + 2, cy - 16, SSD1306_WHITE);                    // bota
+  display.fillTriangle(cx + 2, cy - 15, cx + 9, cy - 18, cx + 6, cy - 12, SSD1306_WHITE);   // pata
+  display.fillCircle(cx - 5, cy - 5, 2, SSD1306_BLACK);                             // chokchoke
+  static const int8_t BX[4] = { 11, 13, 10, 3 }, BY[4] = { -7, 1, 9, 13 };
+  int bites = min(4, (int)(el / 650));
+  for (int k = 0; k < bites; k++) display.fillCircle(cx + BX[k], cy + BY[k], 5, SSD1306_BLACK);
+  for (int k = 0; k < bites; k++) {                    // gura
+    unsigned long t = (el + k * 230) % 900;
+    display.drawPixel(cx + 14 + k * 3, cy - 4 + (int)(t / 60), SSD1306_WHITE);
+  }
+  if (el > 2700) {                                     // shesh: choto hearts
+    for (int k = 0; k < 3; k++) {
+      int hx = 18 + k * 46, hy = 52 - (int)((el - 2700) / 60) % 10;
+      display.fillCircle(hx - 2, hy, 2, SSD1306_WHITE); display.fillCircle(hx + 2, hy, 2, SSD1306_WHITE);
+      display.fillTriangle(hx - 4, hy + 1, hx + 4, hy + 1, hx, hy + 5, SSD1306_WHITE);
+    }
+  }
+}
+
+// Clock er PET screen: 🍎 bar, ❤️ bar, Lv, 🔥 streak
+void drawViewPet(int xo) {
+  int x = xo;
+  display.fillCircle(x + 6, 24, 4, SSD1306_WHITE);                                 // 🍎
+  display.drawLine(x + 6, 19, x + 8, 17, SSD1306_WHITE);
+  display.fillCircle(x + 4, 37, 2, SSD1306_WHITE); display.fillCircle(x + 8, 37, 2, SSD1306_WHITE);   // ❤️
+  display.fillTriangle(x + 2, 38, x + 10, 38, x + 6, 42, SSD1306_WHITE);
+  int vals[2] = { petFood, petFun };
+  for (int r = 0; r < 2; r++) {
+    int y = 20 + r * 14;
+    display.drawRoundRect(x + 15, y, 86, 9, 3, SSD1306_WHITE);
+    int w = vals[r] * 82 / 100;
+    if (w > 0) display.fillRoundRect(x + 17, y + 2, w, 5, 2, SSD1306_WHITE);
+    display.setTextSize(1); display.setCursor(x + 105, y + 1);
+    display.print(vals[r]);
+  }
+  display.setCursor(x + 2, 54);
+  display.print(F("Lv ")); display.print(petLevel);
+  int xb = x + 34;                                                                 // xp bar
+  display.drawRect(xb, 55, 40, 6, SSD1306_WHITE);
+  display.fillRect(xb + 1, 56, (int)petXp * 38 / petXpNeed(), 4, SSD1306_WHITE);
+  int fx = x + 84;                                                                 // 🔥
+  display.fillCircle(fx + 4, 59, 4, SSD1306_WHITE);                               // 🔥 agun: gol nich + chokha matha
+  display.fillTriangle(fx, 58, fx + 8, 58, fx + 5, 50, SSD1306_WHITE);
+  display.fillTriangle(fx + 6, 55, fx + 9, 55, fx + 9, 51, SSD1306_WHITE);
+  display.fillCircle(fx + 4, 60, 2, SSD1306_BLACK);
+  display.setCursor(fx + 11, 55);
+  display.print(petStreak); display.print('d');
 }
 
 // Notun reminder (ferot: kon slot, -1 = jayga nei)
@@ -6215,6 +7887,9 @@ String webInfoJson() {
   j += F(",\"up\":"); j += millis() / 60000UL;
   j += F(",\"heap\":"); j += ESP.getFreeHeap();
   j += F(",\"city\":\"" CITY_NAME_BN "\",\"credits\":"); j += creditsOk ? 1 : 0; j += F(",\"azan\":"); j += (prayerFlags & 1) ? 1 : 0;
+  j += F(",\"login\":\""); if (webLoginOn) j += webUser; j += '"';
+  j += F(",\"night\":"); j += nightJson();
+  j += F(",\"pet\":"); j += petJson();
   j += F(",\"rec\":{\"react\":"); j += reactBest;
   j += F(",\"catch\":"); j += catchBest;
   j += F(",\"flap\":"); j += flapBest;
@@ -6264,6 +7939,15 @@ void drawClock() {
     xoff = (int)(SCREEN_W * (1 - k));
   }
 
+  if (clockBackScr) {                                  // 📋 "ফিরে যাও" (chepe dhorle menu)
+    drawBandBitmap(BN_MN_HINT);
+    display.drawLine(52 + xoff, 31, 76 + xoff, 31, SSD1306_WHITE); display.drawLine(52 + xoff, 32, 76 + xoff, 32, SSD1306_WHITE);
+    display.fillTriangle(48 + xoff, 31, 56 + xoff, 24, 56 + xoff, 39, SSD1306_WHITE);
+    drawCenterBn(BN_ST_BACK, 43);
+    display.display();
+    return;
+  }
+
   if (timerAlarm) {                                    // timer shesh: screen jhilik dey
     drawTimerAlarm();
     display.display();
@@ -6295,6 +7979,7 @@ void drawClock() {
     case CV_WEATHER: drawViewWeather(xoff);     break;
     case CV_ROOM:    drawViewRoom(xoff);        break;
     case CV_TIMER:   drawViewTimer(xoff);       break;
+    case CV_PET:     drawViewPet(xoff);         break;
   }
 
   display.display();
@@ -6906,10 +8591,17 @@ void loop() {
   updateTimer();
   prayerAlerts();                                 // 🕌 namaz / sehri / iftar er shomoy
   schedLoop();                                    // ⏰ alarm, 🌙 ghum, 📝 reminder
+  nightLoop();                                    // 🌙 night mode (alo kom, chup)
+  petLoop();                                      // 🐣 khida, khushi, level
   batteryLoop();                                  // 🔋 battery
   updateSound();
   updateLightning();
   updateArms();
+
+  if (qActive && !alarmRinging) {                 // 💬 Telegram er haan / na proshno
+    qLoop();
+    return;
+  }
 
   if (messageActive()) {                          // 📩 phone theke asha message
     drawMessage();
@@ -6950,11 +8642,21 @@ void loop() {
     return;
   }
 
+  menuReturnCheck();                              // 📋 menu theke khola jinish shesh: menu te ferot
+  if (menuMode) {                                 // 📋 2 tap er menu
+    if (gameMode || alarmRinging) menuMode = false;
+    else { menuLoop(); return; }
+  }
+
   if (gameMode) {                                 // 🎮 khela
     gameLoop();
     return;
   }
 
+  if (peekClockUntil && (!clockMode || (long)(now - peekClockUntil) >= 0)) {   // ✊ tok-tok er 5 s ghori shesh
+    peekClockUntil = 0;
+    if (clockMode) setClockMode(false);
+  }
   if (clockMode) {
     if (mpuOk) mpuRead();                         // ROOM TEMP er jonno
     drawClock();

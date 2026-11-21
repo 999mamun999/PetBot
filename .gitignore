@@ -1,6 +1,7 @@
 # ---- secrets: never upload ----
 PetBot/secrets.h
 tools/ota_password.txt
+tools/web_login.txt
 
 # ---- build / test output ----
 tools/build/

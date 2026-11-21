@@ -4,7 +4,11 @@ param([string]$Ip = "petbot.local", [string]$Name = "web", [int]$Delay = 0, [str
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 if ($Delay) { Start-Sleep -Milliseconds $Delay }
-$hex = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 "http://$Ip/api/shot").Content.Trim()
+# Robot er page e login chalu thakle: tools\web_login.txt e ek line "username:password" (ei file git e jay na)
+$hdr = @{}
+$lf = Join-Path $PSScriptRoot "web_login.txt"
+if (Test-Path $lf) { $hdr.Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content $lf -TotalCount 1).Trim())) }
+$hex = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 8 -Headers $hdr "http://$Ip/api/shot").Content.Trim()
 if ($hex.Length -ne 2048) { "chhobi pawa jay ni ($($hex.Length))"; exit 1 }
 $bmp = New-Object System.Drawing.Bitmap((128 * $Scale), (64 * $Scale))
 $g = [System.Drawing.Graphics]::FromImage($bmp)
