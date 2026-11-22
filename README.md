@@ -40,7 +40,7 @@ rings alarms, and you can control it from your phone — at home through its own
 | 🙃 **Gestures** | upside down for 3 s = do-not-disturb (screen off), pick it up = "Hi!" wave, knock twice on the table = clock for 5 s |
 | 🔐 **Login page** | optional username + password for the phone page (only a salted hash is saved), remember me for 30 days |
 | ⏰ **Alarms & reminders** | 4 alarms (any time, daily or once), bedtime reminder, reminders |
-| 🎂 **Friends' birthdays** | up to 8 names: cake + song + their name on the day, Telegram reminder the evening before |
+| 🎂 **Family & friends' birthdays** | up to 8 (Ammu, Abbu, Bhaiya, Apu, Nanu, Dadu, friends …): cake + song + their name on the day, age, Telegram reminder the evening before |
 | ⏳ **Countdowns** | up to 4 (exam, Eid, trip …): "85 days left" on the clock, a wish on the day |
 | 🌧️ **Tomorrow's weather** | max / min, rain chance; Telegram "take an umbrella ☔" in the evening when rain is likely |
 | 💾 **Backup** | download all settings as one file from the phone page, restore it any time |
@@ -48,6 +48,9 @@ rings alarms, and you can control it from your phone — at home through its own
 | ✈️ **Telegram bot** | control and get alerts from anywhere (`/love`, `/song`, `/namaz`, `/alarm 7:00`, `/remind 30m Drink water`, `/q Coming?`, `/feed`, `/pet`, `/khelo cricket`, `/scene beach`, `/bday add Rina 15-03`, `/cd add Exam 15-02-2027`, `/night 11pm-7am` …) |
 | 🔋 **Battery** | LiPo percentage (8 taps), low-battery warning |
 | 📡 **WiFi upload (OTA)** | update the firmware without a cable (password protected) |
+| 📶 **Start-up** | "Connecting…" WiFi animation, then "WiFi connected!" with a ✓ |
+| ✏️ **Clear pixel fonts** | small English text uses 3 pixel-perfect fonts made for the OLED (tiny / small / bold) |
+| 👆 **Shortcut guide** | the phone page lists every touch, hold and gesture shortcut of the robot |
 
 <p>
   <img src="docs/images/web_bn_bangla.png" width="256"> <img src="docs/images/web_en_namaz.png" width="256"> <img src="docs/images/web_rec_b.png" width="256">
@@ -60,6 +63,9 @@ rings alarms, and you can control it from your phone — at home through its own
 <p>
   <img src="docs/images/play_football.png" width="256"> <img src="docs/images/play_cricket.png" width="256"> <img src="docs/images/play_kite.png" width="256">
   <img src="docs/images/play_basketball.png" width="256"> <img src="docs/images/tomorrow.png" width="256"> <img src="docs/images/countdown.png" width="256">
+</p>
+<p>
+  <img src="docs/images/font_about.png" width="256"> <img src="docs/images/font_message.png" width="256"> <img src="docs/images/font_timer.png" width="256">
 </p>
 <p>
   <img src="docs/images/pet_eat.png" width="256"> <img src="docs/images/question.png" width="256"> <img src="docs/images/question_yes.png" width="256">
@@ -157,6 +163,10 @@ the menu. While a song from the menu plays: 1 tap = next song. In animations: ta
 * **Bangla texts / your name in Bangla:** edit `tools/bangla_text.json` (e.g. `BN_NAME`), then run
   `tools/make_bangla.ps1` (Windows, uses the *Nirmala UI* font) → regenerates `PetBot/bangla_text.h`
 * **Phone page:** edit `PetBot/web_page.h`, then run `tools/make_web.ps1` (or just `tools/upload.ps1`)
+* **English fonts:** `tools/make_font.ps1` (Windows) turns a Windows font into 1-bit OLED fonts →
+  `PetBot/pb_fonts.h`; compare fonts first with `tools/font_preview.ps1`
+* **QR check:** `python tools/qr_decode.py shot.hex` decodes the QR straight from a robot screenshot
+  (`/api/shot` after 7 taps) and prints the link
 * **Pixel-art characters:** draw them in `tools/sprites.txt` (`#` white, `o` black, `.` transparent), then run
   `python tools/make_sprites.py` → regenerates `PetBot/sprites.h` + a preview in `tools/preview/sprites.png`
 * **Screenshots of the OLED:** `tools/shot.ps1` (USB) or `tools/webshot.ps1` (WiFi)
@@ -189,6 +199,7 @@ Made with ❤️ in Bangladesh by **[Al-Mamun](https://github.com/999mamun999)**
 ### বাংলায় সংক্ষেপে
 PetBot একটি ছোট্ট বাংলা-বলা ডেস্ক রোবট। `PetBot/config.h`-এ নিজের নাম, শহর আর সময় অঞ্চল বসিয়ে আপলোড করুন।
 ফোন থেকে `http://petbot.local`, আর যেকোনো জায়গা থেকে Telegram দিয়ে চালানো যায়।
+ফোনের পেজে রোবটের সব শর্টকাট লেখা আছে ("👆 Robot er shortcut")।
 ২ বার টাচ করলে মেনু: গান, খেলা, ১১টা অ্যানিমেশন (গ্রাম, সমুদ্র, খরগোশ, পুকুরে মাছ ধরা...), পোষা রোবটের যত্ন, রাতের মোড আর সেটিং।
 ফোনে "খেলো" চাপলে PetBot নিজে ফুটবল, ক্রিকেট, বাস্কেটবল খেলে বা ঘুড়ি ওড়ায়। বন্ধুদের জন্মদিন, কাউন্টডাউন, কালকের আবহাওয়া আর সেটিং ব্যাকআপও আছে।
 **শুরুর ক্রেডিট স্ক্রিন ও GitHub QR পরিবর্তন করা যাবে না** (লাইসেন্সের শর্ত)।

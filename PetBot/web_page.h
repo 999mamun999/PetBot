@@ -37,7 +37,7 @@ input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(47,129,247,.25)}
 .err.on{display:block;animation:sh .35s}@keyframes sh{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 .hint{margin:16px 0 0;text-align:center;font-size:12px;color:var(--mut);line-height:1.6}
 .hint code{background:#1c2230;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#9ecbff}
-footer{margin-top:22px;text-align:center;font-size:11.5px;color:var(--mut);line-height:1.6}footer b{color:#9ecbff;letter-spacing:2px}footer a{color:#9ecbff}
+footer{margin-top:22px;text-align:center;font-size:11.5px;color:var(--mut);line-height:1.6}footer b{color:#9ecbff;letter-spacing:.5px;font-size:13px}footer a{color:#9ecbff}
 </style></head><body>
 <div class="brand"><img class="logo" src="/favicon.svg" alt="PetBot"><h1>PetBot</h1><p>by Al-Mamun</p></div>
 <form class="card" id="fm" autocomplete="on">
@@ -54,7 +54,7 @@ footer{margin-top:22px;text-align:center;font-size:11.5px;color:var(--mut);line-
 <button class="btn" id="bt" type="submit"><span class="sp"></span><span id="bl">Sign in</span></button>
 <p class="hint">Password bhule gele: Telegram e <code>/webpass off</code></p>
 </form>
-<footer><b>PETBOT</b><br>Designed &amp; Developed by <a href="https://github.com/999mamun999">Al-Mamun</a><br>A Personal Project • 2026</footer>
+<footer><b>PetBot</b><br>Designed &amp; Developed by <a href="https://github.com/999mamun999">Al-Mamun</a><br>A Personal Project • 2026</footer>
 <script>
 const $=i=>document.getElementById(i);let lockT=0;
 $('ey').onclick=()=>{const p=$('p');p.type=p.type=='password'?'text':'password';p.focus()};
@@ -103,6 +103,8 @@ input{font:inherit;width:100%;padding:10px 12px;border-radius:12px;border:1px so
 .bar{height:10px;background:var(--card2);border:1px solid var(--line);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2ea043,#56d364);transition:width .5s}
 .bar i.low{background:linear-gradient(90deg,#f85149,#ff7b72)}.bar.xp i{background:linear-gradient(90deg,#d29922,#ffd33d)}
 .pr{display:grid;grid-template-columns:1fr auto;gap:6px 10px;font-size:15px}.pr div{padding:6px 10px;border-radius:10px}.pr .nx{background:#14233d;color:#9ecbff;font-weight:600}
+.sc{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;font-size:13.5px;align-items:baseline}.sc b{color:#9ecbff;white-space:nowrap;font-size:12.5px}.sc span{color:var(--tx)}
+.chips2{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.chips2 button{padding:5px 10px;font-size:12.5px;border-radius:20px;border:1px solid var(--line)}
 .li{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
 .li span{color:var(--mut);font-size:12.5px}.li em{font-style:normal;font-size:12.5px;color:#9ecbff;text-align:right}.li .x{padding:4px 9px;background:#3a1d1f;color:#ffb3ad}
 .li .x{grid-row:span 2}.li div{display:flex;flex-direction:column}
@@ -189,14 +191,51 @@ details .card{margin-top:0;border-radius:0;border-top:0}details .card:last-child
 <div class="card"><h2>🌧️ Kal er weather</h2><div class="tw" id="tmw"><div class="mut">...</div></div></div>
 <div class="card"><h2>⏳ Countdown <em>4 ta porjonto · robot er ghori te dekhay</em></h2><div id="cdl"></div>
 <div class="row" style="margin-top:8px"><input id="cdn" maxlength="10" placeholder="Naam (jemon SSC)"><input id="cdd" type="date" style="max-width:150px"><button class="pri" onclick="dAdd('cd')">➕</button></div></div>
-<div class="card"><h2>🎂 Bondhuder jonmodin <em>8 jon porjonto</em></h2><div id="bdl"></div>
-<div class="row" style="margin-top:8px"><input id="bdn" maxlength="10" placeholder="Naam (English)"><input id="bdd" type="date" style="max-width:150px"><button class="pri" onclick="dAdd('bd')">➕</button></div>
+<div class="card"><h2>🎂 Priyojoner jonmodin <em>family + bondhu · 8 jon</em></h2><div id="bdl"></div>
+<div class="chips2" id="rel"></div>
+<div class="row" style="margin-top:8px"><input id="bdn" maxlength="10" placeholder="Naam (jemon Ammu, Rina)"><input id="bdd" type="date" style="max-width:150px"><button class="pri" onclick="dAdd('bd')">➕</button></div>
 <div class="mut" style="margin-top:6px">Oi din robot cake + gaan + naam dekhabe, Telegram e ager din o mone koriye dibe</div></div>
 <div class="card"><h2>🕌 Namaz (<span id="prcity">...</span>) <em id="ram"></em></h2><div class="pr" id="pr"><div class="mut">...</div></div></div>
 <div class="card"><h2>📅 Tarikh</h2><div class="kv" id="cal"></div></div>
 </div>
 
 <!-- ===== SETTINGS ===== -->
+<details><summary>👆 Robot er shortcut (touch + nara)</summary>
+<div class="card"><h2>👆 Touch <em>robot er matha-r sensor e</em></h2><div class="sc">
+<b>1 tap</b><span>😊 Khushi</span>
+<b>2 tap</b><span>📋 <u>Menu</u>: tap = porer, chepe dhoro = kholo</span>
+<b>3 tap</b><span>🎵 Porer gaan</span>
+<b>4 tap</b><span>😂 Mojar shobdo</span>
+<b>5 tap</b><span>⏰ Ghori on / off</span>
+<b>6 tap</b><span>🎮 Khela-r menu</span>
+<b>7 tap</b><span>🐙 About + GitHub QR</span>
+<b>8 tap</b><span>🔋 Battery</span>
+<b>Chepe 1s</b><span>😊 Khushi</span>
+<b>Chepe 3s</b><span>🤣 Kat-kutu (hashi)</span>
+<b>Chepe 10s</b><span>🌐 Bangla ⇄ English</span></div></div>
+<div class="card"><h2>⏰ Ghori te <em>5 tap diye chalu</em></h2><div class="sc">
+<b>1 tap</b><span>Porer screen (shomoy, tarikh, namaz, weather, pet, countdown...)</span>
+<b>2 tap</b><span>Menu theke khule thakle menu te ferot</span>
+<b>Chepe 3s</b><span>HOME e: 12 ⇄ 24 ghonta</span>
+<b>Timer e</b><span>2 tap = +1 min, chepe dhoro = start/pause, 3 tap = reset</span>
+<b>My Pet e</b><span>Chepe dhoro = 🍎 khawao</span></div></div>
+<div class="card"><h2>🎮 Khela ar animation e</h2><div class="sc">
+<b>Menu te</b><span>Tap = porer khela, chepe dhoro = khelo</span>
+<b>Chepe 2.5s</b><span>Khela theke menu / ber</span>
+<b>Animation</b><span>Tap = porer drishyo, chepe dhoro = ber, jhakale = random</span>
+<b>Gaan cholle</b><span>(menu theke) 1 tap = porer gaan, 2 tap = menu</span></div></div>
+<div class="card"><h2>🤲 Nara-chara <em>hate niye</em></h2><div class="sc">
+<b>Jhakao</b><span>😵‍💫 Matha ghore (abar jhakale kanna)</span>
+<b>Dolao</b><span>🥰 Bhalobasha</span>
+<b>Hate tolo</b><span>👋 Ghum theke "Hi!"</span>
+<b>Ulta 3s</b><span>🙃 Chup + screen bondho, soja korle "Hi!"</span>
+<b>2 bar tok-tok</b><span>✊ Table e thokale 5s ghori</span>
+<b>Kaat kore rakho</b><span>🤔 Confused</span></div></div>
+<div class="card"><h2>🔔 Bishesh screen e</h2><div class="sc">
+<b>Alarm bajle</b><span>Touch = bondho</span>
+<b>QR / Battery</b><span>Touch = bondho</span>
+<b>Proshno (/q)</b><span>Tap = ✅ Haan, chepe dhoro = ❌ Na</span></div></div>
+</details>
 <details><summary>⚙️ Settings, Telegram, info</summary>
 <div class="card"><h2>🔧 Setting</h2><div class="g3">
 <button id="b-snd" onclick="api('mute')"><span class="e">🔊</span>Sound</button>
@@ -224,7 +263,7 @@ details .card{margin-top:0;border-radius:0;border-top:0}details .card:last-child
 <div class="mut" style="margin-top:8px">Bhule gele: Telegram e /webpass off</div></div>
 <div class="card"><h2>ℹ️ Robot</h2><div class="kv" id="dev"></div></div>
 </details>
-<div style="text-align:center;margin:22px 0 4px;color:var(--mut);font-size:12px;line-height:1.6"><b style="color:#9ecbff;letter-spacing:2px">PETBOT</b><br>Designed &amp; Developed by <a style="color:#9ecbff" href="https://github.com/999mamun999">Al-Mamun</a><br>A Personal Project • 2026</div>
+<div style="text-align:center;margin:22px 0 4px;color:var(--mut);font-size:12px;line-height:1.6"><b style="color:#9ecbff;letter-spacing:.5px;font-size:13px">PetBot</b><br>Designed &amp; Developed by <a style="color:#9ecbff" href="https://github.com/999mamun999">Al-Mamun</a><br>A Personal Project • 2026</div>
 </div>
 <div id="toast"></div>
 <script>
@@ -252,6 +291,7 @@ function ask(){api('game?g=8ball',1).then(t=>{ans.textContent=(q.value.trim()?'�
 function dice(){api('game?g=dice',1).then(t=>{const n=parseInt(t.replace(/\D/g,''))||0;ans.textContent='🎲 '+('⚀⚁⚂⚃⚄⚅'[n-1]||'')+' '+n+(n==6?'  ছক্কা! 🎉':'')})}
 function rps(w){api('game?g='+w,1).then(t=>{ans.textContent=t.replace(/\n+/g,'  ')})}
 dApi('cd');dApi('bd');
+rel.innerHTML=['👩 Ammu','👨 Abbu','👦 Bhaiya','👧 Apu','👵 Nanu','👴 Dadu','🧑 Bondhu'].map(r=>`<button onclick="bdn.value='${r.split(' ')[1]}';bdd.focus()">${r}</button>`).join('');
 scenes.innerHTML=[['🎆','Atoshbaji'],['🌅','Sunset'],['🏡','Gram'],['🌧️','Brishti'],['🌌','Tara'],['🐟','Mach'],['🚂','Train'],['🚀','Rocket'],['🐰','Khorgosh'],['🎣','Mach dhora'],['🐦','Pakhi']].map((s,i)=>`<button onclick="api('game?scene=${i+1}')"><span class="e">${s[0]}</span>${s[1]}</button>`).join('');
 fetch('/api/songs').then(r=>r.json()).then(s=>{songs.innerHTML=s.map((n,i)=>`<button onclick="api('song?i=${i}')">🎵 ${n}</button>`).join('')});
 function saveTk(){const v=tk.value.trim();if(!v)return;fetch('/api/tg/token',{method:'POST',body:new URLSearchParams({token:v})}).then(r=>r.text()).then(t=>{toast(t);tk.value='';setTimeout(st,500)}).catch(()=>toast('✗ robot pawa jay ni'))}
@@ -264,7 +304,8 @@ let PF=null;
 function petAct(a){const before=PF;fetch('/api/pet?a='+a).then(r=>{if(r.status==401)location.replace('/');return r.json()}).then(p=>{petShow(p);PF=p.fed;
 toast(a=='feed'?(before!==null&&p.fed==before?'😅 Pet bhora! Pore khawao':'🍎 Yum! Dhonnobad'):(p.sp?p.sp+' khelchhe! 🎉':'🎾 Khushi!'))}).catch(()=>toast('✗ robot pawa jay ni'))}
 const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function dShow(k,a){$(k+'l').innerHTML=a.length?a.map(x=>`<div class="li"><div><b>${esc(x.n)}</b><span>${x.d} ${MN[x.m-1]}${x.y?' '+x.y:''}</span></div><em>${x.left==0?'🎉 aj!':x.left+' din baki'}</em><button class="x" onclick="dDel('${k}',${x.i})">✕</button></div>`).join(''):'<div class="mut">Ekhono kichu nei</div>'}
+function age(x){const n=new Date();let y=n.getFullYear();if(x.m<n.getMonth()+1||(x.m==n.getMonth()+1&&x.d<n.getDate()))y++;return y-x.y}
+function dShow(k,a){$(k+'l').innerHTML=a.length?a.map(x=>`<div class="li"><div><b>${esc(x.n)}</b><span>${x.d} ${MN[x.m-1]}${x.y?' '+x.y:''}${k=='bd'&&x.y>1900?' · '+age(x)+' bochor hobe':''}</span></div><em>${x.left==0?'🎉 aj!':x.left+' din baki'}</em><button class="x" onclick="dDel('${k}',${x.i})">✕</button></div>`).join(''):'<div class="mut">Ekhono kichu nei</div>'}
 function dApi(k,q){return fetch(`/api/${k}s${q?'?'+q:''}`).then(r=>{if(r.status==401)location.replace('/');return r.json()}).then(j=>{dShow(k,j.list);if(j.err)toast(j.err.replace(/\/(cd|bday)[^\n]*/g,''));return j}).catch(()=>toast('✗ robot pawa jay ni'))}
 function dAdd(k){const n=$(k+'n').value.trim(),d=$(k+'d').value;if(!n||!d){toast('Naam ar tarikh dao');return}
 dApi(k,'add='+encodeURIComponent(n)+'&date='+d).then(j=>{if(j&&!j.err){toast('✓ save holo');$(k+'n').value=''}})}

@@ -243,6 +243,7 @@
   {"id": "BN_GM_SIMON", "text": "মনে রাখো",    "size": 16, "bold": true, "en": "Memory Game"},
   {"id": "BN_GM_HOLE",  "text": "গর্তে বল",     "size": 16, "bold": true, "en": "Ball in Hole"},
   {"id": "BN_GM_SCENE", "text": "অ্যানিমেশন",   "size": 16, "bold": true, "en": "Animations"},
+  {"id": "BN_WIFI_OK",  "text": "ওয়াইফাই কানেক্টেড!",  "size": 14, "en": "WiFi connected!"},
   {"id": "BN_HBD",      "text": "শুভ জন্মদিন!",        "size": 14, "en": "Happy Birthday!"},
   {"id": "BN_PL_FOOT",  "text": "ফুটবল খেলছি!",       "size": 14, "en": "Football time!"},
   {"id": "BN_PL_RUN",   "text": "দৌড় প্রতিযোগিতা!",   "size": 14, "en": "Hurdle race!"},

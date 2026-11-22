@@ -48,8 +48,7 @@
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include <Fonts/TomThumb.h>              // khub chhoto font (credits, QR er pashe)
+#include "pb_fonts.h"                    // ✏️ porishkar English font: PBTiny / PBSmall / PBBold (tools/make_font.ps1)
 #include "qr_github.h"
 #include "sprites.h"                     // 🎨 hate anka pixel-art (tools/make_sprites.py banay)                   // 🐙 GitHub QR (tools/make_qr.py banay)
 #include <ESP8266WiFi.h>
@@ -1759,6 +1758,54 @@ bool checkWifiResetGesture() {
   return false;
 }
 
+// 📶 WiFi icon: majhe bindu + 3 ta dheu; lit = koyta jole (baki gula halka bindu)
+void drawWifiArcs(int cx, int cy, int lit) {
+  display.fillCircle(cx, cy, 2, SSD1306_WHITE);
+  for (int k = 1; k <= 3; k++) {
+    int r = k * 7;
+    for (int a = 222; a <= 318; a += 3) {
+      float rad = a * 0.017453f;
+      int x = cx + (int)roundf(cosf(rad) * r), y = cy + (int)roundf(sinf(rad) * r);
+      if (k <= lit) display.fillRect(x, y, 2, 2, SSD1306_WHITE);
+      else if (a % 12 == 0) display.drawPixel(x, y, SSD1306_WHITE);
+    }
+  }
+}
+
+void wifiConnectingFrame(unsigned long el, const char* ssid) {
+  display.clearDisplay();
+  drawBandBitmap(BN_CONNECTING);                       // কানেক্ট হচ্ছে...
+  drawWifiArcs(64, 44, (el / 320) % 4);
+  if (ssid && ssid[0]) sTxtC(64, 50, ssid);
+  display.display();
+}
+
+void wifiConnectedAnim(const char* ssid) {             // ✅ dheu bhore, ✓ gol chinho boro hoy, jhilik
+  for (int f = 0; f < 40; f++) {
+    display.clearDisplay();
+    drawBandBitmap(BN_WIFI_OK);                        // ওয়াইফাই কানেক্টেড!
+    int shift = f > 8 ? min(16, (f - 8) * 2) : 0;      // icon bam e shore, ✓ er jayga
+    drawWifiArcs(64 - shift, 44, min(3, 1 + f / 3));
+    if (f > 9) {
+      int r = min(9, (f - 9) * 2), cx = 86, cy = 36;
+      display.fillCircle(cx, cy, r, SSD1306_WHITE);
+      if (r >= 8) {
+        int k = min(6, f - 13);                         // ✓ aste aste anka
+        display.drawLine(cx - 5, cy, cx - 2, cy + 3, SSD1306_BLACK); display.drawLine(cx - 5, cy + 1, cx - 2, cy + 4, SSD1306_BLACK);
+        if (k > 2) { display.drawLine(cx - 2, cy + 3, cx - 2 + k, cy + 3 - k, SSD1306_BLACK); display.drawLine(cx - 2, cy + 4, cx - 2 + k, cy + 4 - k, SSD1306_BLACK); }
+      }
+      if (f > 18) for (int i = 0; i < 6; i++) {        // jhilik
+        float a = i * 1.047f + f * 0.12f; int d = 13 + (f % 4);
+        display.drawPixel(cx + (int)(cosf(a) * d), cy + (int)(sinf(a) * d), SSD1306_WHITE);
+      }
+    }
+    if (ssid && ssid[0]) sTxtC(64, 52, ssid);
+    display.display();
+    delay(40);
+  }
+  delay(500);
+}
+
 void wifiBegin(bool forgetSaved) {
   WiFi.mode(WIFI_STA);
   WiFi.hostname(DEVICE_NAME);                 // router er list e "PetBot" naam dekhabe
@@ -1768,12 +1815,25 @@ void wifiBegin(bool forgetSaved) {
   }
   wm.setDebugOutput(false);
   wm.setConfigPortalBlocking(false);       // setup cholar somoy o robot er face cholbe
-  wm.setConnectTimeout(15);
   wm.setConfigPortalTimeout(300);          // 5 min por setup WiFi bondho
-  if (wm.autoConnect(AP_NAME)) {
+  String ssid = WiFi.SSID();               // mone rakha WiFi er naam
+  bool ok = false;
+  if (!forgetSaved && ssid.length()) {     // 📶 nijei connect, opekkhar somoy animation
+    WiFi.begin();
+    unsigned long t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000UL) { wifiConnectingFrame(millis() - t0, ssid.c_str()); delay(40); }
+    ok = WiFi.status() == WL_CONNECTED;
+  }
+  if (!ok) {                               // na hole WiFiManager (dorkar hole setup hotspot)
+    wifiConnectingFrame(0, ssid.c_str());
+    wm.setConnectTimeout(ssid.length() && !forgetSaved ? 4 : 15);
+    ok = wm.autoConnect(AP_NAME);
+  }
+  if (ok) {
     Serial.print(F("WiFi connected: "));
     Serial.println(WiFi.SSID());
     wifiWasConnected = true;
+    wifiConnectedAnim(WiFi.SSID().c_str());
   } else {
     Serial.println("WiFi nai. Phone theke '" AP_NAME "' e connect kore WiFi set koro.");
   }
@@ -1852,7 +1912,7 @@ void wrapMessage(const String& s) {
     char c = src[i];
     if (c == ' ' || c == '\n') {
       String test = line.length() ? line + " " + word : word;
-      if (advanceOf(FreeSans9pt7bGlyphs, test.c_str()) > 124 && line.length()) {
+      if (advanceOf(PBBoldGlyphs, test.c_str()) > 124 && line.length()) {
         msgLines[msgLineCount++] = line;
         line = word;
       } else {
@@ -1910,8 +1970,8 @@ void drawMessage() {
   display.setTextColor(SSD1306_WHITE);
   for (int i = 0; i < 3 && first + i < msgLineCount; i++) {
     const char* s = msgLines[first + i].c_str();
-    int w = advanceOf(FreeSans9pt7bGlyphs, s);
-    printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2, 30 + i * 15, s);
+    int w = advanceOf(PBBoldGlyphs, s);
+    printFont(&PBBold, (SCREEN_W - w) / 2, 30 + i * 15, s);
   }
   display.display();
 }
@@ -2004,8 +2064,8 @@ void qLoop() {
   int y0 = 30 + (3 - n) * 7;                           // kom line hole majhe
   for (int i = 0; i < n; i++) {
     const char* s = msgLines[first + i].c_str();
-    int w = advanceOf(FreeSans9pt7bGlyphs, s);
-    printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2, y0 + i * 15, s);
+    int w = advanceOf(PBBoldGlyphs, s);
+    printFont(&PBBold, (SCREEN_W - w) / 2, y0 + i * 15, s);
   }
   display.display();
 }
@@ -2180,7 +2240,7 @@ static const char TG_CMDS[] PROGMEM = "{\"commands\":["
   "{\"command\":\"namaz\",\"description\":\"Aj er namaz er shomoy\"},"
   "{\"command\":\"sehri\",\"description\":\"Sehri o Iftar er shomoy\"},"
   "{\"command\":\"azan\",\"description\":\"Namaz alert on/off\"},"
-  "{\"command\":\"bday\",\"description\":\"Bondhuder jonmodin list\"},"
+  "{\"command\":\"bday\",\"description\":\"Priyojoner jonmodin (family, bondhu)\"},"
   "{\"command\":\"cd\",\"description\":\"Countdown (SSC, Eid...)\"},"
   "{\"command\":\"q\",\"description\":\"Haan/na proshno (/q Khete ashbe?)\"},"
   "{\"command\":\"khelo\",\"description\":\"PetBot khelbe (football, cricket, ghuri)\"},"
@@ -2389,7 +2449,7 @@ String tgHelp() {
   s += F("🌙 /bedtime 11pm  🎂 /birthday 15-03  🕐 /format (12/24 ghonta)\n");
   s += F("🔋 /battery koto charge ache  🐙 /github\n");
   s += F("❓ /q Khete ashbe?: barir keu robot e tap = HAAN, chepe dhore = NA\n");
-  s += F("🎂 /bday bondhuder jonmodin (/bday add Rina 15-03), ⏳ /cd countdown (/cd add SSC 15-02-2027)\n");
+  s += F("🎂 /bday priyojoner jonmodin (/bday add Ammu 15-03), ⏳ /cd countdown (/cd add SSC 15-02-2027)\n");
   s += F("🐣 /feed khawao, /pet khida-khushi-level dekho, /khelo football-cricket-ghuri...\n");
   s += F("🌙 /night 11pm-7am: rate alo kom + chup, /night off\n");
   s += F("🔐 /webpass naam password: phone page e login, /webpass off\n");
@@ -2928,7 +2988,10 @@ void webDispatch() {
     screenHoldUntil = 0; showQR(); webOk("🐙 GitHub QR");
   } else if (u == F("/api/splash")) { // test: shuru er screen (p=1 naam, p=2 credits) 8 s dekhao
     String p = web.arg("p");
-    if (p == "2") drawCredits(3); else if (p == "3") drawSplashQR(); else drawSplashTitle(6, 6);
+    if (p == "2") drawCredits(3); else if (p == "3") drawSplashQR();
+    else if (p == "4") wifiConnectingFrame(web.arg("t").toInt(), WiFi.SSID().c_str());
+    else if (p == "5") wifiConnectedAnim(WiFi.SSID().c_str());
+    else drawSplashTitle(6, 6);
     screenHoldUntil = millis() + 8000;
     webOk("splash");
   } else if (u == F("/api/shot")) { // 📸 screen er chhobi (1024 byte hex) - USB chara test er jonno
@@ -3652,9 +3715,7 @@ void drawSleepPage(int page, int xoff) {
       display.setTextColor(SSD1306_WHITE);
       printFont(&FreeSansBold9pt7b, x, 13, buf);
       if (!use24) {
-        display.setTextSize(1);
-        display.setCursor(x + w + 3, 6);
-        display.print(tm->tm_hour < 12 ? "AM" : "PM");
+        sTxt(x + w + 3, 4, tm->tm_hour < 12 ? "AM" : "PM");
       }
       break;
     }
@@ -3693,9 +3754,7 @@ void drawSleepPage(int page, int xoff) {
       x += 6;
       printFont(&FreeSansBold9pt7b, x, 13, "C");
       x += cw + 5;
-      display.setTextSize(1);
-      display.setCursor(x, 6);
-      display.print(desc);
+      sTxt(x, 4, desc);
       break;
     }
     case PG_NUMDATE:
@@ -3805,6 +3864,11 @@ int advanceOf(const GFXglyph* g, const char* s) {
   return w;
 }
 
+// ✏️ chhoto porishkar lekha (Tahoma 11): yTop = lekhar upor (purono 6x8 font er motoi)
+int sW(const char* s) { return advanceOf(PBSmallGlyphs, s); }
+void sTxt(int x, int yTop, const char* s) { printFont(&PBSmall, x, yTop + PBSmall_CAP, s); }
+void sTxtC(int cx, int yTop, const char* s) { sTxt(cx - sW(s) / 2, yTop, s); }
+
 void printFont(const GFXfont* f, int x, int baseY, const char* s) {
   display.setFont(f);
   display.setTextSize(1);
@@ -3841,9 +3905,7 @@ void drawBn(const BnText& t, int yTop, int xoff) {
     if (w <= SCREEN_W - 2) {
       printFont(&FreeSansBold9pt7b, (SCREEN_W - w) / 2 + xoff, yTop + 14, enStr(t));
     } else {
-      display.setTextSize(1);
-      display.setCursor((SCREEN_W - (int)strlen(enStr(t)) * 6) / 2 + xoff, yTop + 5);
-      display.print(enStr(t));
+      sTxtC(SCREEN_W / 2 + xoff, yTop + 4, enStr(t));
     }
     return;
   }
@@ -3949,11 +4011,10 @@ void drawViewTimer(int xoff) {
   }
 
   if (!timerRunning && left == 0) {               // kivabe use korbe
-    display.setTextSize(1);
-    display.setCursor(4 + xoff, 20); display.print("2 tap : +1 min");
-    display.setCursor(4 + xoff, 30); display.print("Hold  : start/pause");
-    display.setCursor(4 + xoff, 40); display.print("3 tap : reset");
-    display.setCursor(4 + xoff, 50); display.print("1 tap : porer screen");
+    sTxt(4 + xoff, 19, "2 tap : +1 min");
+    sTxt(4 + xoff, 30, "Hold : start/pause");
+    sTxt(4 + xoff, 41, "3 tap : reset");
+    sTxt(4 + xoff, 52, "1 tap : porer screen");
     return;
   }
 
@@ -4000,7 +4061,6 @@ void drawViewDay(struct tm* tm, int xoff) {            // Wednesday + S M T W T 
   const char* L = "SMTWTFS";
   const int cw = 16;
   int sx = (SCREEN_W - 7 * cw) / 2 + xoff;
-  display.setTextSize(1);
   for (int i = 0; i < 7; i++) {
     int x = sx + i * cw;
     if (i == tm->tm_wday) {                             // aajker din highlight
@@ -4009,8 +4069,8 @@ void drawViewDay(struct tm* tm, int xoff) {            // Wednesday + S M T W T 
     } else {
       display.setTextColor(SSD1306_WHITE);
     }
-    display.setCursor(x + 6, 48);
-    display.print(L[i]);
+    char d1[2] = { L[i], 0 };
+    sTxtC(x + 8, 48, d1);
   }
   display.setTextColor(SSD1306_WHITE);
 }
@@ -4027,9 +4087,7 @@ void drawViewWeather(int xoff) {                       // [icon]  18°C
   printFont(&FreeSansBold18pt7b, x, 45, buf);
   display.drawCircle(x + aT + 3, 23, 3, SSD1306_WHITE);   // degree
   printFont(&FreeSansBold12pt7b, x + aT + 9, 40, "C");
-  display.setTextSize(1);
-  display.setCursor(x, 52);
-  display.print(weatherText(weatherCode));
+  sTxt(x, 51, weatherText(weatherCode));
 }
 
 void drawViewRoom(int xoff) {                          // ghorer temperature (MPU6050)
@@ -4364,10 +4422,9 @@ void drawFestScene() {
     case FS_CAKE:                                      // 🎂 (bondhur hole upore naam)
       drawCake();
       if (festName[0]) {
-        display.setTextSize(1); display.setTextColor(SSD1306_WHITE);
-        int w = strlen(festName) * 6;
-        display.fillRect((SCREEN_W - w) / 2 - 2, 16, w + 4, 9, SSD1306_BLACK);
-        display.setCursor((SCREEN_W - w) / 2, 17); display.print(festName);
+        int w = sW(festName);
+        display.fillRect((SCREEN_W - w) / 2 - 2, 16, w + 4, 11, SSD1306_BLACK);
+        sTxt((SCREEN_W - w) / 2, 17, festName);
       }
       break;
     case FS_SUNRISE:  drawSunrise();      break;
@@ -4413,8 +4470,8 @@ void drawDateLines(int day, const BnText& mon, int year, const BnText& word, int
     }
     printFont(f, x + xoff, 38, b);
     snprintf(b, sizeof(b), "%d %s", year, enStr(word));
-    w = advanceOf(FreeSans9pt7bGlyphs, b);
-    printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2 + xoff, 59, b);
+    w = advanceOf(PBBoldGlyphs, b);
+    printFont(&PBBold, (SCREEN_W - w) / 2 + xoff, 59, b);
     return;
   }
   int wd = bnNumWidth(day, BD_BIG);
@@ -4651,8 +4708,8 @@ void drawViewPrayer(struct tm* tm, int xoff) {
     printFont(&FreeSansBold12pt7b, (SCREEN_W - w) / 2 + xoff, 38, b);
     if (left >= 60) snprintf(b, sizeof(b), "in %dh %dm", left / 60, left % 60);
     else            snprintf(b, sizeof(b), left > 0 ? "in %d min" : "now!", left);
-    w = advanceOf(FreeSans9pt7bGlyphs, b);
-    printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2 + xoff, 59, b);
+    w = advanceOf(PBBoldGlyphs, b);
+    printFont(&PBBold, (SCREEN_W - w) / 2 + xoff, 59, b);
     return;
   }
   // line 1: "যোহর ১১:৫৩"
@@ -5754,9 +5811,8 @@ void plKite(unsigned long e, unsigned long t) {
     if (!cut) for (int k = 0; k < 10; k++) display.drawPixel(ex + 4 + (128 - ex) * k / 10, ey + 8 + (52 - ey) * k / 10, SCW);
     drawSprite(SPR_KITE, ex, ey, cut && ((e / 150) % 2), -1);
     if (cut) {                                          // chhoto lekha, dan pashe niche (ghuri dheke na)
-      display.fillRect(64, 44, 62, 10, SCB);
-      display.setTextSize(1); display.setTextColor(SSD1306_WHITE);
-      display.setCursor(66, 45); display.print(F("BHO-KATTA!"));
+      display.fillRect(62, 43, 66, 12, SCB);
+      sTxt(66, 44, "BHO-KATTA!");
     }
   }
 }
@@ -6123,10 +6179,8 @@ void gameStart(uint8_t g) {
 void draw8Ball(int cx, int cy, int r) {
   display.fillCircle(cx, cy, r, SSD1306_WHITE);
   display.fillCircle(cx, cy, r * 9 / 20, SSD1306_BLACK);
-  display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(cx - 2, cy - 3);
-  display.print('8');
+  sTxtC(cx + 1, cy - 4, "8");
   display.drawPixel(cx - r / 2, cy - r / 2, SSD1306_BLACK);            // chokchoke alo
   display.drawPixel(cx - r / 2 + 1, cy - r / 2, SSD1306_BLACK);
 }
@@ -6216,7 +6270,7 @@ void drawCenterBn(const BnText& b, int y) {
   if (langEn) {
     int w = advanceOf(FreeSansBold9pt7bGlyphs, enStr(b));
     if (w <= SCREEN_W - 2) { printFont(&FreeSansBold9pt7b, (SCREEN_W - w) / 2, y + 13, enStr(b)); }
-    else { display.setTextSize(1); display.setCursor((SCREEN_W - (int)strlen(enStr(b)) * 6) / 2, y + 5); display.print(enStr(b)); }
+    else sTxtC(SCREEN_W / 2, y + 4, enStr(b));
     return;
   }
   display.drawBitmap((SCREEN_W - b.w) / 2, y, b.bmp, b.w, b.h, SSD1306_WHITE);
@@ -6393,7 +6447,7 @@ void simDraw() {
   if (gState == 2 && simWaitLevel && simLit >= 0) lit = simLit;
   for (int d = 0; d < 4; d++) simArrow(d, 64, 40, d == lit, 0.75f);
   int lv = max(1, simLen - 1);
-  if (langEn) { char b[4]; snprintf(b, sizeof(b), "%d", lv); display.setTextSize(1); display.setCursor(64 - (int)strlen(b) * 3, 37); display.print(b); }
+  if (langEn) { char b[4]; snprintf(b, sizeof(b), "%d", lv); sTxtC(64, 36, b); }
   else drawBnNum(64 - bnNumWidth(lv, BD_SML) / 2, 31, lv, BD_SML);
 }
 
@@ -6711,8 +6765,8 @@ void gameLoop() {
       // upore: tumi  ২-১  ami
       if (langEn) {
         char b[20]; snprintf(b, sizeof(b), "You %d - %d Me", rpsScoreYou, rpsScoreMe);
-        int w = advanceOf(FreeSans9pt7bGlyphs, b);
-        printFont(&FreeSans9pt7b, (SCREEN_W - w) / 2, 13, b);
+        int w = advanceOf(PBBoldGlyphs, b);
+        printFont(&PBBold, (SCREEN_W - w) / 2, 13, b);
       } else {
         display.drawBitmap(4, -2, BN_YOU.bmp, BN_YOU.w, BN_YOU.h, SSD1306_WHITE);
         display.drawBitmap(SCREEN_W - 4 - BN_ME.w, -2, BN_ME.bmp, BN_ME.w, BN_ME.h, SSD1306_WHITE);
@@ -6931,9 +6985,7 @@ void saveRecords() {
 void drawBestLine(int v, bool ms) {
   if (langEn) {
     char b[20]; snprintf(b, sizeof(b), ms ? "Best %d ms" : "Best %d", v);
-    display.setTextSize(1);
-    display.setCursor((SCREEN_W - (int)strlen(b) * 6) / 2, 55);
-    display.print(b);
+    sTxtC(SCREEN_W / 2, 54, b);
     return;
   }
   int w = BN_BEST.w + 4 + bnNumWidth(v, BD_SML) + (ms ? 4 + BN_MS.w : 0);
@@ -6944,7 +6996,7 @@ void drawBestLine(int v, bool ms) {
 }
 
 void drawCenterBnAt(const BnText& b, int cx, int y) {  // cx er majhe
-  if (langEn) { display.setTextSize(1); display.setCursor(cx - (int)strlen(enStr(b)) * 3, y + 4); display.print(enStr(b)); return; }
+  if (langEn) { sTxtC(cx, y + 3, enStr(b)); return; }
   display.drawBitmap(cx - b.w / 2, y, b.bmp, b.w, b.h, SSD1306_WHITE);
 }
 
@@ -7415,11 +7467,11 @@ void drawViewPet(int xo) {
     display.drawRoundRect(x + 15, y, 86, 9, 3, SSD1306_WHITE);
     int w = vals[r] * 82 / 100;
     if (w > 0) display.fillRoundRect(x + 17, y + 2, w, 5, 2, SSD1306_WHITE);
-    display.setTextSize(1); display.setCursor(x + 105, y + 1);
-    display.print(vals[r]);
+    char nb[5]; snprintf(nb, sizeof(nb), "%d", vals[r]);
+    sTxt(x + 105, y, nb);
   }
-  display.setCursor(x + 2, 54);
-  display.print(F("Lv ")); display.print(petLevel);
+  char lvb[8]; snprintf(lvb, sizeof(lvb), "Lv %d", petLevel);
+  sTxt(x + 2, 53, lvb);
   int xb = x + 34;                                                                 // xp bar
   display.drawRect(xb, 55, 40, 6, SSD1306_WHITE);
   display.fillRect(xb + 1, 56, (int)petXp * 38 / petXpNeed(), 4, SSD1306_WHITE);
@@ -7428,8 +7480,8 @@ void drawViewPet(int xo) {
   display.fillTriangle(fx, 58, fx + 8, 58, fx + 5, 50, SSD1306_WHITE);
   display.fillTriangle(fx + 6, 55, fx + 9, 55, fx + 9, 51, SSD1306_WHITE);
   display.fillCircle(fx + 4, 60, 2, SSD1306_BLACK);
-  display.setCursor(fx + 11, 55);
-  display.print(petStreak); display.print('d');
+  char sb[8]; snprintf(sb, sizeof(sb), "%dd", petStreak);
+  sTxt(fx + 11, 53, sb);
 }
 
 // ---------------- 🎂 Bondhuder jonmodin + ⏳ countdown + 🌧️ kal er brishti + 💾 backup ----------------
@@ -7521,7 +7573,7 @@ bool parseNameDate(const String& in, String& name, int& d, int& m, int& y) {
 
 String dateAdd(bool cd, const String& arg) {           // ferot: khali = thik, na hole bhul er kotha
   String name; int d, m, y;
-  if (!parseNameDate(arg, name, d, m, y)) return cd ? F("🤔 Lekho: /cd add SSC 15-02-2027") : F("🤔 Lekho: /bday add Rina 15-03 (ba 15-03-2004)");
+  if (!parseNameDate(arg, name, d, m, y)) return cd ? F("🤔 Lekho: /cd add SSC 15-02-2027") : F("🤔 Lekho: /bday add Ammu 15-03 (ba 15-03-1975)");
   DateItem* a = cd ? cds : bds; int n = cd ? CD_N : BD_N;
   if (cd && y == 0) {                                  // bochor na dile: shamner oi tarikh
     int ty, tm_, td; if (todayYMD(ty, tm_, td)) y = dayNum(ty, m, d) >= dayNum(ty, tm_, td) ? ty : ty + 1; else y = 2026;
@@ -7560,7 +7612,7 @@ String dateJson(bool cd) {
 
 String dateListText(bool cd) {
   DateItem* a = cd ? cds : bds; int n = cd ? CD_N : BD_N;
-  String s = cd ? F("⏳ Countdown:\n") : F("🎂 Jonmodin list:\n");
+  String s = cd ? F("⏳ Countdown:\n") : F("🎂 Priyojoner jonmodin:\n");
   int k = 0;
   for (int i = 0; i < n; i++) {
     if (!a[i].day) continue;
@@ -7577,7 +7629,7 @@ String dateListText(bool cd) {
   }
   if (!k) s += F("(ekhono kichu nei)\n");
   s += cd ? F("\nJog: /cd add SSC 15-02-2027\nMuchho: /cd del 1")
-          : F("\nJog: /bday add Rina 15-03 (ba 15-03-2004)\nMuchho: /bday del 1");
+          : F("\nJog: /bday add Ammu 15-03 (ba 15-03-1975)\nMuchho: /bday del 1");
   return s;
 }
 
@@ -7660,9 +7712,9 @@ void drawViewTmrw(int xoff) {
   int a = advanceOf(FreeSansBold12pt7bGlyphs, buf);
   printFont(&FreeSansBold12pt7b, x, 38, buf);
   display.drawCircle(x + a + 3, 22, 2, SSD1306_WHITE);
-  display.setTextSize(1); display.setCursor(x, 46);
-  display.print(F("Rain ")); display.print(tmrwRain); display.print('%');
-  display.setCursor(x, 56); display.print(weatherText(tmrwCode));
+  char rb[12]; snprintf(rb, sizeof(rb), "Rain %d%%", tmrwRain);
+  sTxt(x, 43, rb);
+  sTxt(x, 54, weatherText(tmrwCode));
 }
 
 // Clock: COUNTDOWN screen (3.5 s por por porer ta)
@@ -8056,9 +8108,7 @@ void drawOtaScreen(int pct, bool failed) {
     display.drawRoundRect(12, 41, 104, 10, 3, SSD1306_WHITE);
     display.fillRoundRect(14, 43, pct, 6, 2, SSD1306_WHITE);
     char b[8]; snprintf(b, sizeof(b), "%d%%", pct);
-    display.setTextSize(1);
-    display.setCursor((SCREEN_W - (int)strlen(b) * 6) / 2, 55);
-    display.print(b);
+    sTxtC(SCREEN_W / 2, 54, b);
   }
   display.display();
 }
@@ -8155,20 +8205,18 @@ void drawCredits(int reveal) {                         // reveal: koto line dekh
   drawLogo(x0, 0, 15);
   printFont(&FreeSansBold9pt7b, x0 + 20, 13, "PetBot");
   if (reveal >= 1) {
-    display.setTextSize(1);
     const char* l1 = CREDIT_LINE1;
-    display.setCursor((SCREEN_W - (int)strlen(l1) * 6) / 2, 20);
-    display.print(l1);
+    sTxtC(SCREEN_W / 2, 18, l1);
   }
   if (reveal >= 2) centerText(&FreeSansBold9pt7b, FreeSansBold9pt7bGlyphs, 44, CREDIT_BY);
   if (reveal >= 3) {                                   // "A Personal Project • 2026" (chhoto font, majhe golla)
     const char* a = CREDIT_PROJECT;
     const char* b = CREDIT_YEAR;
-    int wa = advanceOf(TomThumbGlyphs, a), wb = advanceOf(TomThumbGlyphs, b);
+    int wa = advanceOf(PBTinyGlyphs, a), wb = advanceOf(PBTinyGlyphs, b);
     int x = (SCREEN_W - (wa + 9 + wb)) / 2;
-    printFont(&TomThumb, x, 60, a);
+    printFont(&PBTiny, x, 60, a);
     display.fillCircle(x + wa + 4, 57, 1, SSD1306_WHITE);
-    printFont(&TomThumb, x + wa + 9, 60, b);
+    printFont(&PBTiny, x + wa + 9, 60, b);
   }
   display.display();
 }
@@ -8236,9 +8284,8 @@ void drawSplashQR() {
   display.setTextColor(SSD1306_WHITE);
   drawQRCode();
   printFont(&FreeSansBold9pt7b, 68, 13, "GitHub");
-  printFont(&TomThumb, 68, 26, "@" CREDIT_GITHUB);
-  display.setTextSize(1);
-  display.setCursor(68, 33); display.print("Details:");
+  printFont(&PBTiny, 66, 25, CREDIT_GITHUB);
+  sTxt(66, 33, "Details:");
   printFont(&FreeSansBold9pt7b, 68, 56, "7 Tap");
   int uw = (int)((millis() / 60) % 40);                // nicher dag: tap er moto bar bar bhore
   display.fillRect(68, 60, min(uw, 46), 2, SSD1306_WHITE);
@@ -8253,9 +8300,8 @@ void drawQR() {
   if (page == 0) {                                     // ---- QR ----
     drawQRCode();
     printFont(&FreeSansBold9pt7b, 68, 13, "GitHub");
-    printFont(&TomThumb, 68, 26, "@" CREDIT_GITHUB);
-    display.setTextSize(1);
-    display.setCursor(71, 33); display.print("Scan me!");
+    printFont(&PBTiny, 66, 25, CREDIT_GITHUB);
+    sTxt(68, 32, "Scan me!");
     int dx = (int)((millis() / 120) % 6);              // tir: QR er dike
     display.fillTriangle(74 - dx, 48, 82 - dx, 43, 82 - dx, 53, SSD1306_WHITE);
     display.fillRect(82 - dx, 46, 14, 4, SSD1306_WHITE);
@@ -8264,16 +8310,15 @@ void drawQR() {
     int tw = advanceOf(FreeSansBold9pt7bGlyphs, "PetBot");
     drawLogo(2, 0, 15);
     printFont(&FreeSansBold9pt7b, 21, 13, "PetBot");
-    printFont(&TomThumb, 25 + tw, 12, PETBOT_VERSION);
+    printFont(&PBTiny, 25 + tw, 12, PETBOT_VERSION);
     drawPageDots(1, 2, 113, 7);
-    display.setTextSize(1);                            // shob lekha eki (6x8) mapay
     const char* l1 = CREDIT_LINE1;
     const char* l2 = CREDIT_BY;
-    display.setCursor((SCREEN_W - (int)strlen(l1) * 6) / 2, 18); display.print(l1);
-    display.setCursor((SCREEN_W - (int)strlen(l2) * 6) / 2, 28); display.print(l2);
+    sTxtC(SCREEN_W / 2, 17, l1);
+    sTxtC(SCREEN_W / 2, 28, l2);
     for (int x = 10; x < SCREEN_W - 10; x += 3) display.drawPixel(x, 39, SSD1306_WHITE);   // bindu-rekha
-    display.setCursor(13, 44); display.print("Web: petbot.local");
-    display.setCursor(13, 55); display.print("Git: " CREDIT_GITHUB);
+    sTxt(13, 42, "Web: petbot.local");
+    sTxt(13, 53, "Git: " CREDIT_GITHUB);
   }
   display.display();
 }
@@ -8361,10 +8406,9 @@ void drawBatteryScreen() {
   if (!batOk) {
     drawBandBitmap(BN_BAT_NONE);                       // তার লাগানো নেই
     drawBatteryIcon(6, 24, 56, 30, -1, false);
-    display.setTextSize(1);
-    display.setCursor(72, 26); display.print("LiPo B+");
-    display.setCursor(72, 37); display.print("-> 150k");
-    display.setCursor(72, 48); display.print("-> A0");
+    sTxt(72, 24, "LiPo B+");
+    sTxt(72, 36, "-> 150k");
+    sTxt(72, 48, "-> A0");
     display.display();
     return;
   }
@@ -8380,9 +8424,7 @@ void drawBatteryScreen() {
   printFont(bf, x, 47, b);
   printFont(&FreeSansBold9pt7b, x + w + 1, 47, "%");
   snprintf(b, sizeof(b), "%.2fV", batV);
-  display.setTextSize(1);
-  display.setCursor(70 + (52 - (int)strlen(b) * 6) / 2, 55);
-  display.print(b);
+  sTxtC(96, 54, b);
   display.display();
 }
 
@@ -8390,9 +8432,7 @@ void drawBatteryScreen() {
 void drawBatteryScene() {
   drawBatteryIcon(30, 24, 60, 30, max(batPct, 0), true);
   char b[6]; snprintf(b, sizeof(b), "%d%%", max(batPct, 0));
-  display.setTextSize(1);
-  display.setCursor(64 - (int)strlen(b) * 3, 57);
-  display.print(b);
+  sTxtC(64, 55, b);
 }
 
 String tgBatteryText(const String& raw) {
@@ -8758,10 +8798,8 @@ void drawBandBitmap(const BnText& b) {
     int len = strlen(enStr(b));
     if (w <= SCREEN_W - 2) {
       drawLabel(enStr(b), 0);
-    } else if (len * 6 <= SCREEN_W) {
-      display.setTextSize(1);
-      display.setCursor((SCREEN_W - len * 6) / 2, 4);
-      display.print(enStr(b));
+    } else if (sW(enStr(b)) <= SCREEN_W) {
+      sTxtC(SCREEN_W / 2, 3, enStr(b));
     } else {
       long over = w - SCREEN_W + 4;
       long t = (long)(now - moodSince) - 800;
@@ -8808,10 +8846,8 @@ void drawLyric(const Lyric& L, int idx) {
   int len = strlen(L.en);
   if (w <= SCREEN_W - 2) {
     drawLabel(L.en, 0);                                // boro sundor font
-  } else if (len * 6 <= SCREEN_W) {
-    display.setTextSize(1);                            // ektu lomba: choto font e puro line
-    display.setCursor((SCREEN_W - len * 6) / 2, 4);
-    display.print(L.en);
+  } else if (sW(L.en) <= SCREEN_W) {
+    sTxtC(SCREEN_W / 2, 3, L.en);                      // ektu lomba: choto font e puro line
   } else {
     printFont(&FreeSansBold9pt7b, lyricScrollX(w), 13, L.en);   // aro lomba: scroll
   }
@@ -9085,9 +9121,7 @@ void bootScreen(const char* top, const BnText* a, const BnText* b, const char* e
   if (a) drawBn(*a, (b || extra) ? 18 : 28, 0);
   if (b) drawBn(*b, 38, 0);
   if (extra) {
-    display.setTextSize(1);
-    display.setCursor((SCREEN_W - (int)strlen(extra) * 6) / 2, 46);
-    display.print(extra);
+    sTxtC(SCREEN_W / 2, 46, extra);
   }
   display.display();
 }
@@ -9115,8 +9149,8 @@ void drawGreetingFrame(const BnText* greet, int reveal, int heartBeat) {
   drawHeart(114, 8, 5 + heartBeat);
   if (langEn) {                                        // English: Good Morning / Al-Mamun
     display.setTextColor(SSD1306_WHITE);
-    int gw = advanceOf(FreeSans9pt7bGlyphs, enStr(*greet));
-    printFont(&FreeSans9pt7b, (SCREEN_W - gw) / 2, 33, enStr(*greet));
+    int gw = advanceOf(PBBoldGlyphs, enStr(*greet));
+    printFont(&PBBold, (SCREEN_W - gw) / 2, 33, enStr(*greet));
     int nw = advanceOf(FreeSansBold12pt7bGlyphs, enStr(BN_NAME));
     int nx = (SCREEN_W - nw) / 2;
     printFont(&FreeSansBold12pt7b, nx, 57, enStr(BN_NAME));
@@ -9210,8 +9244,7 @@ void setup() {
   }
 
   bool forgetWifi = checkWifiResetGesture();       // touch chepe dhorle WiFi reset
-  bootScreen("WiFi...", &BN_CONNECTING, nullptr, nullptr);     // কানেক্ট হচ্ছে...
-  wifiBegin(forgetWifi);
+  wifiBegin(forgetWifi);                          // 📶 "কানেক্ট হচ্ছে..." animation -> "ওয়াইফাই কানেক্টেড!"
   if (!wifiWasConnected) {
     bootScreen("WiFi set", &BN_PHONE_CONNECT, nullptr, AP_NAME);  // ফোনে কানেক্ট করো: PetBot-Setup
     delay(3000);
