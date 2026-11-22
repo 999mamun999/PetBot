@@ -24,23 +24,28 @@ rings alarms, and you can control it from your phone — at home through its own
 
 | | |
 |---|---|
-| 😊 **Moods** | 28 animated faces (happy, love, angry, sleepy, dizzy, whistle …), weather moods, "nobody plays with me" idle story, sleeps after 5 min |
+| 😊 **Moods** | 28 animated faces (happy, love, angry, sleepy, dizzy, whistle …), weather moods, "nobody plays with me" idle story, sleeps after 4 min (only a real lift or touch wakes it) |
 | 👋 **Touch & motion** | taps, long press, shake → dizzy, tilt → eyes follow, rocking → love |
 | 🎵 **Songs** | 14 songs incl. *Amar Sonar Bangla* (with flag screen), Bangla rhymes, karaoke lyrics |
-| ⏰ **Clock mode** | big clock, date, **Bangla date (বঙ্গাব্দ)**, Hijri date, **prayer times**, weather, room temperature, timer, 12/24 h |
+| ⏰ **Clock mode** | big clock, date, **Bangla date (বঙ্গাব্দ)**, Hijri date, **prayer times**, weather, **tomorrow's forecast**, room temperature, timer, pet, **countdowns**, 12/24 h |
 | 🕌 **Prayer & Ramadan** | computed on the robot (Karachi method, Hanafi Asr), prayer alerts, Sehri wake-up & Iftar alerts |
 | 🎉 **Special days** | 21 Feb (Shaheed Minar), 26 Mar & 16 Dec (flag), Pohela Boishakh, Eid, Ramadan, your birthday 🎂 |
 | 📋 **Menu (2 taps)** | everything in one place: love, songs, funny sounds, clock, games, animations, pet, About & QR, battery, language, settings (sound, night mode, 12/24 h). Tap = next, hold = open; every item comes back to the menu |
 | 🎮 **8 games** | Magic 8-Ball, Ludo dice, Rock-Paper-Scissors, Reaction test, Catch the stars (tilt), Fly the bird, Memory (tilt), Ball in hole (tilt) — records are saved |
-| 🎬 **11 animations** | fireworks over a city, sunset beach, Bangladeshi village (hut, smoke, paddy, boat), rainy night with lightning, starry sky, aquarium, steam train, space rocket, bunny pulling a carrot, a boy fishing at the pond, a bird singing on a tree |
+| 🎬 **11 animations** | hand-drawn pixel art with dithered shading: fireworks over a city, sunset beach, Bangladeshi village (thatched hut, kitchen smoke, paddy, *chhoi* boat), rainy night with lightning, starry sky, aquarium, steam train, space rocket, bunny pulling a carrot, a boy fishing at the pond, a *doyel* bird singing on a tree |
+| 🎾 **PetBot plays sports** | press *Khelo* (phone) or `/khelo`: a mini PetBot plays football (GOAL!), a hurdle race (🏆 1st!), basketball (+2!), cricket (SIX!) or flies a kite (*BHO-KATTA!*) |
 | 🐣 **Pet care** | hunger and happiness bars, feed it (phone, Telegram or hold on the *MY PET* screen) and it eats an apple, levels with fireworks, daily streak, "I'm hungry!" alerts |
 | ❓ **Yes / No from Telegram** | `/q Coming to eat?` — someone at home taps the robot for **YES** or holds it for **NO**, and the answer comes back to your Telegram |
 | 🌙 **Night mode** | at night (default 11 pm – 7 am): dim screen, quiet (alarms still ring), sleeps quickly, wakes up with a stretch |
 | 🙃 **Gestures** | upside down for 3 s = do-not-disturb (screen off), pick it up = "Hi!" wave, knock twice on the table = clock for 5 s |
 | 🔐 **Login page** | optional username + password for the phone page (only a salted hash is saved), remember me for 30 days |
 | ⏰ **Alarms & reminders** | 4 alarms (any time, daily or once), bedtime reminder, reminders |
+| 🎂 **Friends' birthdays** | up to 8 names: cake + song + their name on the day, Telegram reminder the evening before |
+| ⏳ **Countdowns** | up to 4 (exam, Eid, trip …): "85 days left" on the clock, a wish on the day |
+| 🌧️ **Tomorrow's weather** | max / min, rain chance; Telegram "take an umbrella ☔" in the evening when rain is likely |
+| 💾 **Backup** | download all settings as one file from the phone page, restore it any time |
 | 📱 **Phone page** | `http://petbot.local` — Normal / Game / Clock modes, messages, faces, songs, alarms, settings |
-| ✈️ **Telegram bot** | control and get alerts from anywhere (`/love`, `/song`, `/namaz`, `/alarm 7:00`, `/remind 30m Drink water`, `/q Coming?`, `/feed`, `/pet`, `/scene beach`, `/night 11pm-7am` …) |
+| ✈️ **Telegram bot** | control and get alerts from anywhere (`/love`, `/song`, `/namaz`, `/alarm 7:00`, `/remind 30m Drink water`, `/q Coming?`, `/feed`, `/pet`, `/khelo cricket`, `/scene beach`, `/bday add Rina 15-03`, `/cd add Exam 15-02-2027`, `/night 11pm-7am` …) |
 | 🔋 **Battery** | LiPo percentage (8 taps), low-battery warning |
 | 📡 **WiFi upload (OTA)** | update the firmware without a cable (password protected) |
 
@@ -48,8 +53,13 @@ rings alarms, and you can control it from your phone — at home through its own
   <img src="docs/images/web_bn_bangla.png" width="256"> <img src="docs/images/web_en_namaz.png" width="256"> <img src="docs/images/web_rec_b.png" width="256">
 </p>
 <p>
-  <img src="docs/images/scene_beach.png" width="256"> <img src="docs/images/scene_rabbit.png" width="256"> <img src="docs/images/scene_fishing.png" width="256">
-  <img src="docs/images/scene_bird.png" width="256"> <img src="docs/images/scene_train.png" width="256"> <img src="docs/images/scene_space.png" width="256">
+  <img src="docs/images/scene_village.png" width="256"> <img src="docs/images/scene_beach.png" width="256"> <img src="docs/images/scene_rain.png" width="256">
+  <img src="docs/images/scene_bird.png" width="256"> <img src="docs/images/scene_fishing.png" width="256"> <img src="docs/images/scene_rabbit.png" width="256">
+  <img src="docs/images/scene_train.png" width="256"> <img src="docs/images/scene_fireworks.png" width="256"> <img src="docs/images/scene_space.png" width="256">
+</p>
+<p>
+  <img src="docs/images/play_football.png" width="256"> <img src="docs/images/play_cricket.png" width="256"> <img src="docs/images/play_kite.png" width="256">
+  <img src="docs/images/play_basketball.png" width="256"> <img src="docs/images/tomorrow.png" width="256"> <img src="docs/images/countdown.png" width="256">
 </p>
 <p>
   <img src="docs/images/pet_eat.png" width="256"> <img src="docs/images/question.png" width="256"> <img src="docs/images/question_yes.png" width="256">
@@ -143,10 +153,12 @@ the menu. While a song from the menu plays: 1 tap = next song. In animations: ta
 
 ## 🛠️ Customizing
 
-* **Your settings:** `PetBot/config.h`
+* **Your settings:** `PetBot/config.h` (name, city — the default city is just an example, set your own)
 * **Bangla texts / your name in Bangla:** edit `tools/bangla_text.json` (e.g. `BN_NAME`), then run
   `tools/make_bangla.ps1` (Windows, uses the *Nirmala UI* font) → regenerates `PetBot/bangla_text.h`
 * **Phone page:** edit `PetBot/web_page.h`, then run `tools/make_web.ps1` (or just `tools/upload.ps1`)
+* **Pixel-art characters:** draw them in `tools/sprites.txt` (`#` white, `o` black, `.` transparent), then run
+  `python tools/make_sprites.py` → regenerates `PetBot/sprites.h` + a preview in `tools/preview/sprites.png`
 * **Screenshots of the OLED:** `tools/shot.ps1` (USB) or `tools/webshot.ps1` (WiFi)
 
 ---
@@ -178,4 +190,5 @@ Made with ❤️ in Bangladesh by **[Al-Mamun](https://github.com/999mamun999)**
 PetBot একটি ছোট্ট বাংলা-বলা ডেস্ক রোবট। `PetBot/config.h`-এ নিজের নাম, শহর আর সময় অঞ্চল বসিয়ে আপলোড করুন।
 ফোন থেকে `http://petbot.local`, আর যেকোনো জায়গা থেকে Telegram দিয়ে চালানো যায়।
 ২ বার টাচ করলে মেনু: গান, খেলা, ১১টা অ্যানিমেশন (গ্রাম, সমুদ্র, খরগোশ, পুকুরে মাছ ধরা...), পোষা রোবটের যত্ন, রাতের মোড আর সেটিং।
+ফোনে "খেলো" চাপলে PetBot নিজে ফুটবল, ক্রিকেট, বাস্কেটবল খেলে বা ঘুড়ি ওড়ায়। বন্ধুদের জন্মদিন, কাউন্টডাউন, কালকের আবহাওয়া আর সেটিং ব্যাকআপও আছে।
 **শুরুর ক্রেডিট স্ক্রিন ও GitHub QR পরিবর্তন করা যাবে না** (লাইসেন্সের শর্ত)।

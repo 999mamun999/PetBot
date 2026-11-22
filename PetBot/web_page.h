@@ -103,6 +103,10 @@ input{font:inherit;width:100%;padding:10px 12px;border-radius:12px;border:1px so
 .bar{height:10px;background:var(--card2);border:1px solid var(--line);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2ea043,#56d364);transition:width .5s}
 .bar i.low{background:linear-gradient(90deg,#f85149,#ff7b72)}.bar.xp i{background:linear-gradient(90deg,#d29922,#ffd33d)}
 .pr{display:grid;grid-template-columns:1fr auto;gap:6px 10px;font-size:15px}.pr div{padding:6px 10px;border-radius:10px}.pr .nx{background:#14233d;color:#9ecbff;font-weight:600}
+.li{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+.li span{color:var(--mut);font-size:12.5px}.li em{font-style:normal;font-size:12.5px;color:#9ecbff;text-align:right}.li .x{padding:4px 9px;background:#3a1d1f;color:#ffb3ad}
+.li .x{grid-row:span 2}.li div{display:flex;flex-direction:column}
+.tw{display:flex;align-items:center;gap:14px}.tw .e{font-size:40px}.tw b{font-size:22px}.tw div{font-size:13px;color:var(--mut);line-height:1.6}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}.kv span{color:var(--mut)}
 .songs button{text-align:left;padding:10px}
 .srow{display:grid;grid-template-columns:1fr auto 70px;gap:6px;align-items:center;margin-bottom:8px;font-size:13px}.srow input{padding:8px 6px;font-size:14px}.srow button{padding:9px 2px}
@@ -182,6 +186,12 @@ details .card{margin-top:0;border-radius:0;border-top:0}details .card:last-child
 <div class="card"><h2>📝 Reminder <em>3 ta porjonto</em></h2><div id="rems"></div>
 <input id="rt" maxlength="38" placeholder="Ki mone korabo? (jemon: Pani khao)" style="margin-top:8px">
 <div class="row" style="margin-top:8px;align-items:center"><span id="rtm" class="tp"></span><button class="pri" onclick="addRem()">➕ Add</button><button onclick="sched('remin=30&t='+encodeURIComponent(rt.value));rt.value=''">+30 min</button></div></div>
+<div class="card"><h2>🌧️ Kal er weather</h2><div class="tw" id="tmw"><div class="mut">...</div></div></div>
+<div class="card"><h2>⏳ Countdown <em>4 ta porjonto · robot er ghori te dekhay</em></h2><div id="cdl"></div>
+<div class="row" style="margin-top:8px"><input id="cdn" maxlength="10" placeholder="Naam (jemon SSC)"><input id="cdd" type="date" style="max-width:150px"><button class="pri" onclick="dAdd('cd')">➕</button></div></div>
+<div class="card"><h2>🎂 Bondhuder jonmodin <em>8 jon porjonto</em></h2><div id="bdl"></div>
+<div class="row" style="margin-top:8px"><input id="bdn" maxlength="10" placeholder="Naam (English)"><input id="bdd" type="date" style="max-width:150px"><button class="pri" onclick="dAdd('bd')">➕</button></div>
+<div class="mut" style="margin-top:6px">Oi din robot cake + gaan + naam dekhabe, Telegram e ager din o mone koriye dibe</div></div>
 <div class="card"><h2>🕌 Namaz (<span id="prcity">...</span>) <em id="ram"></em></h2><div class="pr" id="pr"><div class="mut">...</div></div></div>
 <div class="card"><h2>📅 Tarikh</h2><div class="kv" id="cal"></div></div>
 </div>
@@ -203,6 +213,10 @@ details .card{margin-top:0;border-radius:0;border-top:0}details .card:last-child
 <div class="row"><div><div class="mut" style="margin-bottom:4px">Shuru</div><input id="ns" type="time" value="23:00"></div><div><div class="mut" style="margin-bottom:4px">Shesh</div><input id="ne" type="time" value="07:00"></div></div>
 <div class="row" style="margin-top:8px"><button id="b-ngt" onclick="nightSet(NG.on?0:1)">🌙 Chalu koro</button><button class="pri" onclick="nightSet(1)">Save</button></div>
 <div class="mut" style="margin-top:8px">Rate screen er alo kom, shobdo bondho (alarm thik e baje), 30 second por ghum</div></div>
+<div class="card"><h2>💾 Backup <em>shob setting ek file e</em></h2>
+<div class="row"><button class="pri" onclick="location.href='/api/backup'">⬇️ Download</button><button onclick="rf.click()">⬆️ Restore</button></div>
+<input type="file" id="rf" accept=".json,application/json" style="display:none" onchange="restoreBk(this.files[0]);this.value=''">
+<div class="mut" style="margin-top:8px">Alarm, reminder, jonmodin, countdown, pet, night mode, login, Telegram: sob. File e Telegram token thake, kauke dio na.</div></div>
 <div class="card"><h2>🔐 Login <em>page e password</em></h2><div id="lgs" style="font-size:13px;margin-bottom:10px;line-height:1.6">...</div>
 <div class="row"><input id="lu" autocomplete="off" autocapitalize="off" placeholder="Username (jemon mamun)"></div>
 <div class="row" style="margin-top:8px"><input id="lp" type="password" autocomplete="new-password" placeholder="Password (4+ akkhor)"><button class="pri" onclick="saveLg()">Save</button></div>
@@ -222,7 +236,7 @@ const F=[[0,'😐','Normal'],[1,'😊','Happy'],[2,'😆','Laugh'],[3,'😍','Lo
 const G=[[1,'🎱','Magic Ball','jhankao, uttor pao'],[2,'🎲','Ludu Chhokka','jhankao ba tap'],[3,'✊','Pathor-Kagoj-Kanchi','tap bachai, chepe khelo'],
 [4,'⚡','Ke Beshi Chotpote?','shada hole touch'],[5,'⭐','Tara Dhoro','kaat kore jhuri sorao'],[6,'🐦','Pakhi Orao','touch korle ure'],
 [7,'🧠','Mone Rakho','tir er order kaat kore'],[8,'⚫','Gorte Bol','kaat kore bol gorao']];
-const V=[[0,'🏠','Home'],[1,'📆','Date'],[2,'🇧🇩','Bangla'],[3,'🌙','Hijri'],[4,'🕌','Namaz'],[5,'📅','Din'],[6,'🌤️','Weather'],[7,'🌡️','Ghor er tap'],[8,'⏱️','Timer'],[9,'🐣','Pet']];
+const V=[[0,'🏠','Home'],[1,'📆','Date'],[2,'🇧🇩','Bangla'],[3,'🌙','Hijri'],[4,'🕌','Namaz'],[5,'📅','Din'],[6,'🌤️','Weather'],[7,'🌡️','Ghor er tap'],[8,'⏱️','Timer'],[9,'🐣','Pet'],[10,'🌧️','Kal'],[11,'⏳','Countdown']];
 faces.innerHTML=F.map(f=>`<button onclick="api('mood?m=${f[0]}')"><span class="e">${f[1]}</span>${f[2]}</button>`).join('');fcnt.textContent=F.length+' ta';
 games.innerHTML=G.map(g=>`<button class="game" onclick="api('game?start=${g[0]}')"><span class="e">${g[1]}</span><span><b>${g[2]}</b><i>${g[3]}</i></span></button>`).join('');
 views.innerHTML=V.map(v=>`<button id="v${v[0]}" onclick="api('view?v=${v[0]}')"><span class="e">${v[1]}</span>${v[2]}</button>`).join('');
@@ -237,6 +251,7 @@ m.addEventListener('keydown',e=>{if(e.key=='Enter')sendMsg()});
 function ask(){api('game?g=8ball',1).then(t=>{ans.textContent=(q.value.trim()?'„'+q.value.trim()+'“ → ':'🎱 ')+t;q.value=''})}
 function dice(){api('game?g=dice',1).then(t=>{const n=parseInt(t.replace(/\D/g,''))||0;ans.textContent='🎲 '+('⚀⚁⚂⚃⚄⚅'[n-1]||'')+' '+n+(n==6?'  ছক্কা! 🎉':'')})}
 function rps(w){api('game?g='+w,1).then(t=>{ans.textContent=t.replace(/\n+/g,'  ')})}
+dApi('cd');dApi('bd');
 scenes.innerHTML=[['🎆','Atoshbaji'],['🌅','Sunset'],['🏡','Gram'],['🌧️','Brishti'],['🌌','Tara'],['🐟','Mach'],['🚂','Train'],['🚀','Rocket'],['🐰','Khorgosh'],['🎣','Mach dhora'],['🐦','Pakhi']].map((s,i)=>`<button onclick="api('game?scene=${i+1}')"><span class="e">${s[0]}</span>${s[1]}</button>`).join('');
 fetch('/api/songs').then(r=>r.json()).then(s=>{songs.innerHTML=s.map((n,i)=>`<button onclick="api('song?i=${i}')">🎵 ${n}</button>`).join('')});
 function saveTk(){const v=tk.value.trim();if(!v)return;fetch('/api/tg/token',{method:'POST',body:new URLSearchParams({token:v})}).then(r=>r.text()).then(t=>{toast(t);tk.value='';setTimeout(st,500)}).catch(()=>toast('✗ robot pawa jay ni'))}
@@ -247,7 +262,16 @@ pst.textContent=`🔥 Streak: ${p.streak} din · aj khawano: ${p.fed} bar (2 bar
 pmood.textContent=p.food<30?'😢 khida peyeche!':p.fun<30?'🥺 khelte chay':'😊 bhalo ache'}
 let PF=null;
 function petAct(a){const before=PF;fetch('/api/pet?a='+a).then(r=>{if(r.status==401)location.replace('/');return r.json()}).then(p=>{petShow(p);PF=p.fed;
-toast(a=='feed'?(before!==null&&p.fed==before?'😅 Pet bhora! Pore khawao':'🍎 Yum! Dhonnobad'):'🎾 Khushi!')}).catch(()=>toast('✗ robot pawa jay ni'))}
+toast(a=='feed'?(before!==null&&p.fed==before?'😅 Pet bhora! Pore khawao':'🍎 Yum! Dhonnobad'):(p.sp?p.sp+' khelchhe! 🎉':'🎾 Khushi!'))}).catch(()=>toast('✗ robot pawa jay ni'))}
+const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function dShow(k,a){$(k+'l').innerHTML=a.length?a.map(x=>`<div class="li"><div><b>${esc(x.n)}</b><span>${x.d} ${MN[x.m-1]}${x.y?' '+x.y:''}</span></div><em>${x.left==0?'🎉 aj!':x.left+' din baki'}</em><button class="x" onclick="dDel('${k}',${x.i})">✕</button></div>`).join(''):'<div class="mut">Ekhono kichu nei</div>'}
+function dApi(k,q){return fetch(`/api/${k}s${q?'?'+q:''}`).then(r=>{if(r.status==401)location.replace('/');return r.json()}).then(j=>{dShow(k,j.list);if(j.err)toast(j.err.replace(/\/(cd|bday)[^\n]*/g,''));return j}).catch(()=>toast('✗ robot pawa jay ni'))}
+function dAdd(k){const n=$(k+'n').value.trim(),d=$(k+'d').value;if(!n||!d){toast('Naam ar tarikh dao');return}
+dApi(k,'add='+encodeURIComponent(n)+'&date='+d).then(j=>{if(j&&!j.err){toast('✓ save holo');$(k+'n').value=''}})}
+function dDel(k,i){if(confirm('Muche felbo?'))dApi(k,'del='+i)}
+function tmShow(t){tmw.innerHTML=t?`<span class="e">${t.p>=60?'🌧️':t.c<=1?'☀️':t.c<=3?'⛅':t.c>=95?'⛈️':t.c>=51?'🌦️':'☁️'}</span><div><b>${t.hi}° / ${t.lo}°</b><br>${esc(t.t)} · ☔ brishti ${t.p}%</div>`:'<div class="mut">Ekhono pawa jay ni</div>'}
+function restoreBk(f){if(!f)return;if(!confirm('Ei backup diye robot er shob setting bodle dibo? Robot restart hobe.'))return;
+f.text().then(t=>fetch('/api/restore',{method:'POST',headers:{'Content-Type':'text/plain'},body:t})).then(r=>r.text()).then(t=>{toast(t);if(t.startsWith('✓'))setTimeout(()=>location.reload(),8000)}).catch(()=>toast('✗ robot pawa jay ni'))}
 let NG={on:1};
 function ngShow(n){NG=n;ngs.innerHTML=n.on?(n.now?'😴 <b>Ekhon rat</b>: alo kom, chup':'🟢 Chalu')+` · ${n.s} – ${n.e}`:'⚪ Bondho';
 if(document.activeElement!=ns)ns.value=n.s;if(document.activeElement!=ne)ne.value=n.e;$('b-ngt').textContent=n.on?'☀️ Bondho koro':'🌙 Chalu koro'}
@@ -278,7 +302,7 @@ if(i.pr){let nx=i.pr.findIndex(p=>p[2]>i.nowMin);if(nx<0)nx=0;
 pr.innerHTML=i.pr.map((p,k)=>`<div class="${k==nx?'nx':''}">${p[0]}</div><div class="${k==nx?'nx':''}">${p[1]}</div>`).join('')+(i.ram?`<div class="nx">🌙 সাহরি শেষ</div><div class="nx">${i.sehri}</div><div class="nx">🌅 ইফতার</div><div class="nx">${i.iftar}</div>`:'');
 ram.textContent=i.ram?'🌙 রমজান':'Karachi, Hanafi'}
 const r=i.rec;rec.innerHTML=`<span>⚡ Chotpote</span><b>${r.react?r.react+' ms':'—'}</b><span>⭐ Tara</span><b>${r.catch||'—'}</b><span>🐦 Pakhi</span><b>${r.flap||'—'}</b><span>🧠 Mone rakho</span><b>${r.simon?'level '+r.simon:'—'}</b><span>⚫ Gorte bol</span><b>${r.hole?'level '+r.hole:'—'}</b><span>✊ Tumi-Ami</span><b>${r.rps}</b>`;
-if(i.night)ngShow(i.night);if(i.pet){petShow(i.pet);PF=i.pet.fed}
+if(i.night)ngShow(i.night);tmShow(i.tm);if(i.pet){petShow(i.pet);PF=i.pet.fed}
 lgs.innerHTML=i.login?`🟢 Chalu · username: <b>${esc(i.login)}</b><br>Notun password dite niche likho`:'⚪ Bondho: WiFi te je keu page khulte pare';lgoff.style.display=i.login?'':'none';
 $('b-azn').classList.toggle('on',!!i.azan);$('b-azn').querySelector('.e').textContent=i.azan?'🔔':'🔕';
 const sig=i.rssi>-60?'darun':i.rssi>-72?'bhalo':'durbol';

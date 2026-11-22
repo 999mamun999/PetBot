@@ -10,3 +10,4 @@ tools/preview/
 *.bin
 *.elf
 *.map
+petbot-backup*.json

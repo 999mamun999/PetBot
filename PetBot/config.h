@@ -13,11 +13,11 @@
 #define OWNER_NAME     "Al-Mamun"
 
 // ---- City (weather + prayer times) ------------------------------------
-// Find your latitude/longitude on Google Maps (right click -> coordinates).
-#define CITY_NAME      "Dinajpur"
-#define CITY_NAME_BN   "দিনাজপুর"
-#define CITY_LAT       25.62
-#define CITY_LON       88.64
+// Example: Dhaka. Find your own latitude/longitude on Google Maps (right click -> coordinates).
+#define CITY_NAME      "Dhaka"
+#define CITY_NAME_BN   "ঢাকা"
+#define CITY_LAT       23.81
+#define CITY_LON       90.41
 
 // ---- Time zone ---------------------------------------------------------
 #define TZ_HOURS       6.0             // UTC offset in hours (Bangladesh = 6)
